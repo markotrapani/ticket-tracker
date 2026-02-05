@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Import - Ticket Tracker{% endblock %}
+{% block content %}
+<h4 class="mb-3">Import Tickets</h4>
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+    <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-csv">CSV Import</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-pdf">PDF Import</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-manual">Manual Entry</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-paste">Paste Content</a></li>
+</ul>
+
+<div class="tab-content">
+    <!-- CSV Import -->
+    <div class="tab-pane fade show active" id="tab-csv">
+        <div class="card">
+            <div class="card-body">
+                <p>Upload a ZenDesk CSV export (semicolon-delimited) to bulk import ticket metadata.</p>
+                <form id="csv-form" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <input type="file" class="form-control" name="file" accept=".csv" required>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" id="csv-update" checked>
+                        <label class="form-check-label" for="csv-update">Update existing tickets</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Import CSV</button>
+                </form>
+                <div id="csv-result" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF Import -->
+    <div class="tab-pane fade" id="tab-pdf">
+        <div class="card">
+            <div class="card-body">
+                <p>Upload a ZenDesk ticket PDF to enrich an existing ticket with full content.</p>
+                <form id="pdf-form" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <input type="file" class="form-control" name="file" accept=".pdf" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Ticket ID (optional - auto-detected from PDF filename)</label>
+                        <input type="text" class="form-control" name="ticket_id" placeholder="e.g. 149320">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Upload & Parse PDF</button>
+                </form>
+                <div id="pdf-result" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Entry -->
+    <div class="tab-pane fade" id="tab-manual">
+        <div class="card">
+            <div class="card-body">
+                <p>Create a new ticket entry manually.</p>
+                <form id="manual-form">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">ZenDesk ID *</label>
+                            <input type="text" class="form-control" name="zendesk_id" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Created Date</label>
+                            <input type="date" class="form-control" name="created_date">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Status</label>
+                            <select class="form-select" name="status">
+                                <option value="Open">Open</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Solved">Solved</option>
+                                <option value="Closed" selected>Closed</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Subject</label>
+                            <input type="text" class="form-control" name="subject">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Customer</label>
+                            <input type="text" class="form-control" name="customer_name">
+                        </div>
+                        <div class="col-md-12">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control" name="description" rows="4"></textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Root Cause</label>
+                            <textarea class="form-control" name="root_cause" rows="2"></textarea>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Resolution</label>
+                            <textarea class="form-control" name="resolution" rows="2"></textarea>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary mt-3">Create Ticket</button>
+                </form>
+                <div id="manual-result" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Paste Content -->
+    <div class="tab-pane fade" id="tab-paste">
+        <div class="card">
+            <div class="card-body">
+                <p>Paste ticket content to enrich an existing ticket.</p>
+                <form id="paste-form">
+                    <div class="mb-3">
+                        <label class="form-label">ZenDesk ID *</label>
+                        <input type="text" class="form-control" name="zendesk_id" required placeholder="e.g. 149320">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Subject</label>
+                        <input type="text" class="form-control" name="subject">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Pasted Content (full ticket text)</label>
+                        <textarea class="form-control" name="content" rows="10" placeholder="Paste the full ticket content here..."></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Content</button>
+                </form>
+                <div id="paste-result" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// CSV Import
+document.getElementById('csv-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    formData.set('update_existing', document.getElementById('csv-update').checked ? 'true' : 'false');
+    const el = document.getElementById('csv-result');
+    el.innerHTML = '<div class="text-muted">Importing...</div>';
+    const resp = await fetch('/api/import/csv', {method: 'POST', body: formData});
+    const data = await resp.json();
+    if (resp.ok) {
+        el.innerHTML = `<div class="alert alert-success">
+            New: ${data.new} | Updated: ${data.updated} | Skipped: ${data.skipped}
+            ${data.errors.length ? '<br>Errors: ' + data.errors.join(', ') : ''}
+        </div>`;
+    } else {
+        el.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+    }
+});
+
+// PDF Import
+document.getElementById('pdf-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const el = document.getElementById('pdf-result');
+    el.innerHTML = '<div class="text-muted">Parsing PDF...</div>';
+    const resp = await fetch('/api/import/pdf', {method: 'POST', body: formData});
+    const data = await resp.json();
+    if (resp.ok) {
+        el.innerHTML = `<div class="alert alert-success">
+            Ticket ${data.ticket_id} enriched!
+            <a href="/tickets/${data.ticket_id}">View ticket</a>
+        </div>`;
+    } else {
+        el.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+    }
+});
+
+// Manual Entry
+document.getElementById('manual-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData.entries());
+    const el = document.getElementById('manual-result');
+    const resp = await fetch('/api/tickets', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    const result = await resp.json();
+    if (resp.ok) {
+        el.innerHTML = `<div class="alert alert-success">
+            Ticket ${result.zendesk_id} created!
+            <a href="/tickets/${result.zendesk_id}">View ticket</a>
+        </div>`;
+    } else {
+        el.innerHTML = `<div class="alert alert-danger">${result.error}</div>`;
+    }
+});
+
+// Paste Content
+document.getElementById('paste-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData.entries());
+    const el = document.getElementById('paste-result');
+    const resp = await fetch('/api/import/paste', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    const result = await resp.json();
+    if (resp.ok) {
+        el.innerHTML = `<div class="alert alert-success">
+            Ticket ${result.zendesk_id} enriched!
+            <a href="/tickets/${result.zendesk_id}">View ticket</a>
+        </div>`;
+    } else {
+        el.innerHTML = `<div class="alert alert-danger">${result.error}</div>`;
+    }
+});
+</script>
+{% endblock %}

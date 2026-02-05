@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Statistics - Ticket Tracker{% endblock %}
+{% block content %}
+<h4 class="mb-3">Statistics</h4>
+
+<div class="row g-3 mb-4" id="overview-cards"></div>
+
+<div class="row g-3">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Ticket Volume (Monthly)</div>
+            <div class="card-body"><canvas id="chart-timeline"></canvas></div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Score Distribution</div>
+            <div class="card-body"><canvas id="chart-scores"></canvas></div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Resolution Time</div>
+            <div class="card-body"><canvas id="chart-resolution"></canvas></div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Categories</div>
+            <div class="card-body"><canvas id="chart-categories"></canvas></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadStats() {
+    const [overview, timeline, scores, resolution, categories] = await Promise.all([
+        fetch('/api/stats/overview').then(r => r.json()),
+        fetch('/api/stats/timeline').then(r => r.json()),
+        fetch('/api/stats/score-distribution').then(r => r.json()),
+        fetch('/api/stats/resolution-times').then(r => r.json()),
+        fetch('/api/stats/categories').then(r => r.json()),
+    ]);
+
+    // Overview cards
+    document.getElementById('overview-cards').innerHTML = `
+        <div class="col-md-2"><div class="card text-center"><div class="card-body py-2"><h4>${overview.total}</h4><small class="text-muted">Total</small></div></div></div>
+        <div class="col-md-2"><div class="card text-center"><div class="card-body py-2"><h4>${overview.enriched}</h4><small class="text-muted">Enriched</small></div></div></div>
+        <div class="col-md-2"><div class="card text-center"><div class="card-body py-2"><h4>${overview.starred}</h4><small class="text-muted">Starred</small></div></div></div>
+        <div class="col-md-2"><div class="card text-center"><div class="card-body py-2"><h4>${overview.avg_score}</h4><small class="text-muted">Avg Score</small></div></div></div>
+        <div class="col-md-2"><div class="card text-center"><div class="card-body py-2"><h4>${overview.avg_resolution_days}d</h4><small class="text-muted">Avg Resolution</small></div></div></div>
+    `;
+
+    // Timeline chart
+    new Chart(document.getElementById('chart-timeline'), {
+        type: 'bar',
+        data: {
+            labels: timeline.map(t => t.month),
+            datasets: [{label: 'Tickets', data: timeline.map(t => t.count), backgroundColor: '#0d6efd'}]
+        },
+        options: {responsive: true, plugins: {legend: {display: false}}}
+    });
+
+    // Score distribution
+    new Chart(document.getElementById('chart-scores'), {
+        type: 'bar',
+        data: {
+            labels: scores.map(s => s.range),
+            datasets: [{label: 'Tickets', data: scores.map(s => s.count), backgroundColor: '#198754'}]
+        },
+        options: {responsive: true, plugins: {legend: {display: false}}}
+    });
+
+    // Resolution time
+    new Chart(document.getElementById('chart-resolution'), {
+        type: 'bar',
+        data: {
+            labels: resolution.map(r => r.range),
+            datasets: [{label: 'Tickets', data: resolution.map(r => r.count), backgroundColor: '#ffc107'}]
+        },
+        options: {responsive: true, plugins: {legend: {display: false}}}
+    });
+
+    // Categories
+    if (categories.length > 1 || (categories.length === 1 && categories[0].category !== 'Uncategorized')) {
+        new Chart(document.getElementById('chart-categories'), {
+            type: 'bar',
+            data: {
+                labels: categories.map(c => c.category),
+                datasets: [{label: 'Tickets', data: categories.map(c => c.count), backgroundColor: '#6f42c1'}]
+            },
+            options: {responsive: true, indexAxis: 'y', plugins: {legend: {display: false}}}
+        });
+    } else {
+        document.getElementById('chart-categories').parentElement.innerHTML = '<p class="text-muted text-center">Categorize tickets to see breakdown</p>';
+    }
+}
+
+loadStats();
+</script>
+{% endblock %}

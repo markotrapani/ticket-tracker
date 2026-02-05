@@ -1,0 +1,337 @@
+{% extends "base.html" %}
+{% block title %}#{{ ticket.zendesk_id }} - Ticket Tracker{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+        <h4 class="mb-1">
+            <a href="{{ ticket.zendesk_url }}" target="_blank" class="text-decoration-none">#{{ ticket.zendesk_id }}</a>
+            <button class="btn btn-sm btn-outline-warning ms-2" onclick="toggleStar()">
+                <i class="bi bi-star{{ '-fill' if ticket.is_starred else '' }}" id="star-icon"></i>
+            </button>
+            {% if ticket.subject %}
+            <span class="fs-5 text-muted ms-2">{{ ticket.subject }}</span>
+            {% endif %}
+        </h4>
+        <div class="text-muted">
+            <span class="badge bg-{{ 'success' if ticket.status == 'Closed' else 'warning' if ticket.status in ('Open', 'Pending') else 'secondary' }}">{{ ticket.status }}</span>
+            <span class="badge score-badge score-{{ (ticket.final_score // 20) | int if ticket.final_score else 0 }}">Score: {{ ticket.final_score | round(0) | int if ticket.final_score else '-' }}</span>
+            <span class="badge bg-{{ 'success' if ticket.enrichment_level == 'full' else 'info' if ticket.enrichment_level == 'partial' else 'secondary' }}">{{ ticket.enrichment_level }}</span>
+        </div>
+    </div>
+    <div>
+        <a href="/tickets" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left"></i> Back</a>
+    </div>
+</div>
+
+<div class="row g-3">
+    <!-- Left Column: Metadata + Content -->
+    <div class="col-md-8">
+        <!-- Metadata Card -->
+        <div class="card mb-3">
+            <div class="card-header">Metadata</div>
+            <div class="card-body">
+                <div class="row g-2">
+                    <div class="col-md-4"><strong>Created:</strong> {{ ticket.created_date }}</div>
+                    <div class="col-md-4"><strong>Solved:</strong> {{ ticket.solved_date or 'Open' }}</div>
+                    <div class="col-md-4"><strong>Resolution:</strong> {{ ticket.resolution_days if ticket.resolution_days is not none else 'N/A' }} days</div>
+                    <div class="col-md-4"><strong>Group:</strong> {{ ticket.group_name }}</div>
+                    <div class="col-md-4"><strong>Assignee:</strong> {{ ticket.assignee }}</div>
+                    <div class="col-md-4"><strong>ZenDesk:</strong> <a href="{{ ticket.zendesk_url }}" target="_blank">Open</a></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Editable Fields -->
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between">
+                <span>Ticket Details</span>
+                <small class="text-muted" id="save-status"></small>
+            </div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Subject</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="subject" value="{{ ticket.subject or '' }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Customer</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="customer_name" value="{{ ticket.customer_name or '' }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Category</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="category" value="{{ ticket.category or '' }}" list="category-list">
+                        <datalist id="category-list">
+                            <option value="CRDB/Active-Active">
+                            <option value="Cluster">
+                            <option value="Performance">
+                            <option value="Connectivity">
+                            <option value="Configuration">
+                            <option value="Upgrade/Migration">
+                            <option value="TLS/SSL">
+                            <option value="ACL/Auth">
+                            <option value="Data Loss">
+                            <option value="Monitoring">
+                            <option value="Billing">
+                            <option value="General">
+                        </datalist>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Product Area</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="product_area" value="{{ ticket.product_area or '' }}" list="product-list">
+                        <datalist id="product-list">
+                            <option value="Redis Cloud">
+                            <option value="Redis Software">
+                            <option value="ACRE">
+                            <option value="Redis Enterprise">
+                            <option value="Redis OSS">
+                        </datalist>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Severity</label>
+                        <select class="form-select form-select-sm editable" data-field="severity">
+                            <option value="">--</option>
+                            {% for s in ['P1', 'P2', 'P3', 'P4', 'P5'] %}
+                            <option value="{{ s }}" {{ 'selected' if ticket.severity == s else '' }}>{{ s }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label fw-bold">Description</label>
+                        <textarea class="form-control form-control-sm editable" data-field="description" rows="6">{{ ticket.description or '' }}</textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Root Cause</label>
+                        <textarea class="form-control form-control-sm editable" data-field="root_cause" rows="3">{{ ticket.root_cause or '' }}</textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Resolution</label>
+                        <textarea class="form-control form-control-sm editable" data-field="resolution" rows="3">{{ ticket.resolution or '' }}</textarea>
+                    </div>
+                    <div class="col-md-12">
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input editable-check" type="checkbox" data-field="is_production_outage" id="chk-outage" {{ 'checked' if ticket.is_production_outage else '' }}>
+                            <label class="form-check-label" for="chk-outage">Production Outage</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input editable-check" type="checkbox" data-field="is_escalation" id="chk-escalation" {{ 'checked' if ticket.is_escalation else '' }}>
+                            <label class="form-check-label" for="chk-escalation">Escalation</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input editable-check" type="checkbox" data-field="involved_custom_scripts" id="chk-scripts" {{ 'checked' if ticket.involved_custom_scripts else '' }}>
+                            <label class="form-check-label" for="chk-scripts">Custom Scripts</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Interview Prep -->
+        <div class="card mb-3">
+            <div class="card-header">Interview Prep</div>
+            <div class="card-body">
+                <label class="form-label fw-bold">Interview Notes</label>
+                <textarea class="form-control form-control-sm editable" data-field="interview_notes" rows="3" placeholder="Why is this ticket worth mentioning in an interview?">{{ ticket.interview_notes or '' }}</textarea>
+                <label class="form-label fw-bold mt-2">Skills Demonstrated</label>
+                <input type="text" class="form-control form-control-sm editable" data-field="skills_demonstrated" value="{{ ticket.skills_demonstrated or '' }}" placeholder='e.g. ["debugging", "RCA", "scripting", "customer communication"]'>
+            </div>
+        </div>
+
+        <!-- Notes -->
+        <div class="card mb-3">
+            <div class="card-header">Notes</div>
+            <div class="card-body">
+                <div id="notes-list">
+                    {% for note in notes %}
+                    <div class="border-bottom pb-2 mb-2" id="note-{{ note.id }}">
+                        <div class="d-flex justify-content-between">
+                            <small class="text-muted">{{ note.created_at.strftime('%Y-%m-%d %H:%M') }} ({{ note.note_type }})</small>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteNote({{ note.id }})"><i class="bi bi-trash"></i></button>
+                        </div>
+                        <p class="mb-0">{{ note.content }}</p>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="input-group mt-2">
+                    <input type="text" id="new-note" class="form-control form-control-sm" placeholder="Add a note...">
+                    <button class="btn btn-sm btn-outline-primary" onclick="addNote()">Add</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Scoring + Tags -->
+    <div class="col-md-4">
+        <!-- Score Card -->
+        <div class="card mb-3">
+            <div class="card-header">Significance Score</div>
+            <div class="card-body">
+                <div class="text-center mb-3">
+                    <h1 class="mb-0 score-badge score-{{ (ticket.final_score // 20) | int if ticket.final_score else 0 }}" style="display:inline-block;padding:10px 20px;border-radius:8px;">
+                        {{ ticket.final_score | round(0) | int if ticket.final_score else '?' }}
+                    </h1>
+                    <div class="text-muted">/ 100</div>
+                </div>
+
+                {% if score_breakdown %}
+                <h6>Auto Score: {{ ticket.auto_score | round(0) | int if ticket.auto_score else '-' }} / 55</h6>
+                <ul class="list-unstyled small">
+                    {% for key, val in score_breakdown.auto.items() %}
+                    <li><span class="text-muted">{{ key }}:</span> {{ val }}</li>
+                    {% endfor %}
+                </ul>
+
+                {% if score_breakdown.content %}
+                <h6>Content Score: {{ ticket.content_score | round(0) | int if ticket.content_score else '-' }} / 45</h6>
+                <ul class="list-unstyled small">
+                    {% for key, val in score_breakdown.content.items() %}
+                    <li><span class="text-muted">{{ key }}:</span> {{ val }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                {% endif %}
+
+                <hr>
+                <label class="form-label fw-bold">Manual Score Override (0-100)</label>
+                <div class="input-group input-group-sm">
+                    <input type="number" id="manual-score" class="form-control" min="0" max="100" value="{{ ticket.manual_score or '' }}" placeholder="Leave empty to use auto">
+                    <button class="btn btn-outline-primary" onclick="setManualScore()">Set</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tags -->
+        <div class="card mb-3">
+            <div class="card-header">Tags</div>
+            <div class="card-body">
+                <div id="tags-container" class="mb-2">
+                    {% for tag in tags %}
+                    <span class="badge bg-primary me-1 mb-1">{{ tag }} <i class="bi bi-x cursor-pointer" onclick="removeTag('{{ tag }}')"></i></span>
+                    {% endfor %}
+                </div>
+                <div class="input-group input-group-sm">
+                    <input type="text" id="new-tag" class="form-control" placeholder="Add tag...">
+                    <button class="btn btn-outline-primary" onclick="addTag()">Add</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- PDF Import -->
+        <div class="card mb-3">
+            <div class="card-header">Enrich from PDF</div>
+            <div class="card-body">
+                <form id="pdf-form" enctype="multipart/form-data">
+                    <input type="file" class="form-control form-control-sm mb-2" name="file" accept=".pdf">
+                    <input type="hidden" name="ticket_id" value="{{ ticket.zendesk_id }}">
+                    <button type="submit" class="btn btn-sm btn-outline-success w-100">Upload & Parse PDF</button>
+                </form>
+                <div id="pdf-result" class="mt-2 small"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ZENDESK_ID = '{{ ticket.zendesk_id }}';
+
+// Auto-save editable fields
+let saveTimeout;
+document.querySelectorAll('.editable').forEach(el => {
+    el.addEventListener('input', () => {
+        clearTimeout(saveTimeout);
+        document.getElementById('save-status').textContent = 'Saving...';
+        saveTimeout = setTimeout(() => saveFields(), 500);
+    });
+});
+document.querySelectorAll('.editable-check').forEach(el => {
+    el.addEventListener('change', () => saveFields());
+});
+
+async function saveFields() {
+    const data = {};
+    document.querySelectorAll('.editable').forEach(el => {
+        const field = el.dataset.field;
+        data[field] = el.value || null;
+    });
+    document.querySelectorAll('.editable-check').forEach(el => {
+        data[el.dataset.field] = el.checked;
+    });
+
+    const resp = await fetch(`/api/tickets/${ZENDESK_ID}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    if (resp.ok) {
+        document.getElementById('save-status').textContent = 'Saved';
+        setTimeout(() => document.getElementById('save-status').textContent = '', 2000);
+    }
+}
+
+async function toggleStar() {
+    const resp = await fetch(`/api/tickets/${ZENDESK_ID}/star`, {method: 'POST'});
+    const data = await resp.json();
+    const icon = document.getElementById('star-icon');
+    icon.className = data.is_starred ? 'bi bi-star-fill' : 'bi bi-star';
+}
+
+async function setManualScore() {
+    const val = document.getElementById('manual-score').value;
+    const data = val ? {manual_score: parseFloat(val)} : {manual_score: null};
+    await fetch(`/api/tickets/${ZENDESK_ID}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(data)
+    });
+    location.reload();
+}
+
+async function addNote() {
+    const input = document.getElementById('new-note');
+    if (!input.value.trim()) return;
+    await fetch(`/api/tickets/${ZENDESK_ID}/notes`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content: input.value})
+    });
+    location.reload();
+}
+
+async function deleteNote(id) {
+    await fetch(`/api/tickets/${ZENDESK_ID}/notes/${id}`, {method: 'DELETE'});
+    document.getElementById(`note-${id}`).remove();
+}
+
+async function addTag() {
+    const input = document.getElementById('new-tag');
+    if (!input.value.trim()) return;
+    await fetch(`/api/tickets/${ZENDESK_ID}/tags`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tags: [input.value.trim()]})
+    });
+    location.reload();
+}
+
+async function removeTag(tag) {
+    await fetch(`/api/tickets/${ZENDESK_ID}/tags/${tag}`, {method: 'DELETE'});
+    location.reload();
+}
+
+// PDF upload
+document.getElementById('pdf-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const resp = await fetch('/api/import/pdf', {method: 'POST', body: formData});
+    const data = await resp.json();
+    if (resp.ok) {
+        document.getElementById('pdf-result').innerHTML = '<span class="text-success">PDF imported! Reloading...</span>';
+        setTimeout(() => location.reload(), 1000);
+    } else {
+        document.getElementById('pdf-result').innerHTML = `<span class="text-danger">${data.error}</span>`;
+    }
+});
+</script>
+{% endblock %}

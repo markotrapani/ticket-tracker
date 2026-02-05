@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Interview Prep - Ticket Tracker{% endblock %}
+{% block content %}
+<h4 class="mb-3"><i class="bi bi-star-fill text-warning"></i> Interview Prep</h4>
+<p class="text-muted">Your starred and highest-scored tickets for interview preparation.</p>
+
+{% if starred %}
+<h5 class="mt-4">Starred Tickets ({{ starred | length }})</h5>
+<div class="row g-3">
+    {% for t in starred %}
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <h6 class="card-title">
+                        <a href="/tickets/{{ t.zendesk_id }}">#{{ t.zendesk_id }}</a>
+                        {{ t.subject or '' }}
+                    </h6>
+                    <span class="badge score-badge score-{{ (t.final_score // 20) | int if t.final_score else 0 }}">{{ t.final_score | round(0) | int if t.final_score else '-' }}</span>
+                </div>
+                <p class="card-text small text-muted">
+                    {{ t.created_date }} | {{ t.resolution_days if t.resolution_days is not none else 'open' }} days |
+                    {{ t.category or 'Uncategorized' }}
+                    {% if t.customer_name %} | {{ t.customer_name }}{% endif %}
+                </p>
+                {% if t.interview_notes %}
+                <p class="card-text small">{{ t.interview_notes[:200] }}</p>
+                {% endif %}
+                {% if t.skills_demonstrated %}
+                <p class="small"><strong>Skills:</strong> {{ t.skills_demonstrated }}</p>
+                {% endif %}
+                {% if t.resolution %}
+                <p class="card-text small text-muted"><strong>Resolution:</strong> {{ t.resolution[:150] }}</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="alert alert-info">No starred tickets yet. Star tickets from the detail view to add them here.</div>
+{% endif %}
+
+<h5 class="mt-4">Top Scored Tickets</h5>
+<table class="table table-sm table-hover">
+    <thead>
+        <tr><th>ID</th><th>Score</th><th>Days</th><th>Category</th><th>Subject</th><th>Customer</th></tr>
+    </thead>
+    <tbody>
+        {% for t in top %}
+        <tr class="cursor-pointer" onclick="window.location='/tickets/{{ t.zendesk_id }}'">
+            <td>
+                {% if t.is_starred %}<i class="bi bi-star-fill text-warning"></i>{% endif %}
+                {{ t.zendesk_id }}
+            </td>
+            <td><span class="badge score-badge score-{{ (t.final_score // 20) | int if t.final_score else 0 }}">{{ t.final_score | round(0) | int }}</span></td>
+            <td>{{ t.resolution_days if t.resolution_days is not none else 'open' }}</td>
+            <td>{{ t.category or '' }}</td>
+            <td>{{ (t.subject or '')[:40] }}</td>
+            <td>{{ t.customer_name or '' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="mt-4">
+    <a href="/api/export?format=markdown&starred=true" class="btn btn-outline-primary" download>
+        <i class="bi bi-download"></i> Export Starred (Markdown)
+    </a>
+    <a href="/api/export?format=json&min_score=30" class="btn btn-outline-secondary" download>
+        <i class="bi bi-download"></i> Export Top Scores (JSON)
+    </a>
+</div>
+{% endblock %}

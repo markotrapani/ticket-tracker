@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Tickets - Ticket Tracker{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Tickets</h4>
+    <span id="ticket-count" class="text-muted"></span>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <input type="text" id="filter-search" class="form-control form-control-sm" placeholder="Search tickets...">
+            </div>
+            <div class="col-md-2">
+                <select id="filter-status" class="form-select form-select-sm">
+                    <option value="all">All Statuses</option>
+                    <option value="Open">Open</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Hold">Hold</option>
+                    <option value="Solved">Solved</option>
+                    <option value="Closed">Closed</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select id="filter-enrichment" class="form-select form-select-sm">
+                    <option value="all">All Enrichment</option>
+                    <option value="metadata_only">Metadata Only</option>
+                    <option value="partial">Partial</option>
+                    <option value="full">Full</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">Min Score</span>
+                    <input type="number" id="filter-min-score" class="form-control" min="0" max="100" step="5">
+                </div>
+            </div>
+            <div class="col-md-1">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="filter-starred">
+                    <label class="form-check-label" for="filter-starred"><i class="bi bi-star-fill text-warning"></i></label>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <select id="filter-sort" class="form-select form-select-sm">
+                    <option value="final_score">Sort: Score</option>
+                    <option value="created_date">Sort: Created</option>
+                    <option value="zendesk_id">Sort: Ticket ID</option>
+                </select>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Ticket Table -->
+<div class="table-responsive">
+    <table class="table table-sm table-hover" id="tickets-table">
+        <thead>
+            <tr>
+                <th></th>
+                <th>ID</th>
+                <th>Score</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Solved</th>
+                <th>Days</th>
+                <th>Subject</th>
+                <th>Customer</th>
+                <th>Category</th>
+                <th>Enrichment</th>
+            </tr>
+        </thead>
+        <tbody id="tickets-body">
+            <tr><td colspan="11" class="text-center text-muted">Loading...</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination -->
+<nav id="pagination-nav" class="d-flex justify-content-center">
+    <ul class="pagination pagination-sm" id="pagination"></ul>
+</nav>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const PARAMS = new URLSearchParams(window.location.search);
+let currentPage = 1;
+
+// Pre-fill search from URL param
+if (PARAMS.get('q')) {
+    document.getElementById('filter-search').value = PARAMS.get('q');
+}
+
+function buildQuery() {
+    const params = new URLSearchParams();
+    const q = document.getElementById('filter-search').value.trim();
+    const status = document.getElementById('filter-status').value;
+    const enrichment = document.getElementById('filter-enrichment').value;
+    const minScore = document.getElementById('filter-min-score').value;
+    const starred = document.getElementById('filter-starred').checked;
+    const sort = document.getElementById('filter-sort').value;
+
+    if (q) params.set('q', q);
+    if (status !== 'all') params.set('status', status);
+    if (enrichment !== 'all') params.set('enrichment', enrichment);
+    if (minScore) params.set('min_score', minScore);
+    if (starred) params.set('starred', 'true');
+    params.set('sort', sort);
+    params.set('order', 'desc');
+    params.set('page', currentPage);
+    params.set('per_page', 50);
+    return params.toString();
+}
+
+function enrichmentBadge(level) {
+    const map = {
+        'metadata_only': '<span class="badge bg-secondary">Metadata</span>',
+        'partial': '<span class="badge bg-info">Partial</span>',
+        'full': '<span class="badge bg-success">Full</span>',
+    };
+    return map[level] || level;
+}
+
+function scoreBadge(score) {
+    if (score === null || score === undefined) return '<span class="badge bg-secondary">-</span>';
+    const level = Math.min(Math.floor(score / 20), 4);
+    return `<span class="badge score-badge score-${level}">${Math.round(score)}</span>`;
+}
+
+async function loadTickets() {
+    const body = document.getElementById('tickets-body');
+    body.innerHTML = '<tr><td colspan="11" class="text-center text-muted">Loading...</td></tr>';
+
+    const resp = await fetch('/api/tickets?' + buildQuery());
+    const data = await resp.json();
+
+    document.getElementById('ticket-count').textContent = `${data.total} tickets`;
+
+    if (data.tickets.length === 0) {
+        body.innerHTML = '<tr><td colspan="11" class="text-center text-muted">No tickets found</td></tr>';
+        return;
+    }
+
+    body.innerHTML = data.tickets.map(t => `
+        <tr class="cursor-pointer" onclick="window.location='/tickets/${t.zendesk_id}'">
+            <td>${t.is_starred ? '<i class="bi bi-star-fill text-warning"></i>' : ''}</td>
+            <td><code>${t.zendesk_id}</code></td>
+            <td>${scoreBadge(t.final_score)}</td>
+            <td>${t.status}</td>
+            <td>${t.created_date || ''}</td>
+            <td>${t.solved_date || ''}</td>
+            <td>${t.resolution_days !== null ? t.resolution_days : '<span class="text-muted">open</span>'}</td>
+            <td>${t.subject || '<span class="text-muted">-</span>'}</td>
+            <td>${t.customer_name || ''}</td>
+            <td>${t.category || ''}</td>
+            <td>${enrichmentBadge(t.enrichment_level)}</td>
+        </tr>
+    `).join('');
+
+    // Pagination
+    const pagEl = document.getElementById('pagination');
+    pagEl.innerHTML = '';
+    for (let i = 1; i <= data.pages; i++) {
+        pagEl.innerHTML += `<li class="page-item ${i === data.page ? 'active' : ''}">
+            <a class="page-link" href="#" onclick="currentPage=${i};loadTickets();return false;">${i}</a></li>`;
+    }
+}
+
+// Debounced search
+let searchTimeout;
+document.getElementById('filter-search').addEventListener('input', () => {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => { currentPage = 1; loadTickets(); }, 300);
+});
+
+// Filter change handlers
+['filter-status', 'filter-enrichment', 'filter-sort'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => { currentPage = 1; loadTickets(); });
+});
+document.getElementById('filter-min-score').addEventListener('change', () => { currentPage = 1; loadTickets(); });
+document.getElementById('filter-starred').addEventListener('change', () => { currentPage = 1; loadTickets(); });
+
+loadTickets();
+</script>
+{% endblock %}

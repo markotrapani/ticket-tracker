@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Ticket Tracker{% endblock %}
+{% block content %}
+<h4 class="mb-3">Dashboard</h4>
+
+<!-- Stats Row -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary bg-opacity-25 text-center">
+            <div class="card-body">
+                <h2 class="mb-0">{{ overview.total }}</h2>
+                <small class="text-muted">Total Tickets</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success bg-opacity-25 text-center">
+            <div class="card-body">
+                <h2 class="mb-0">{{ overview.enriched }}</h2>
+                <small class="text-muted">Enriched</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning bg-opacity-25 text-center">
+            <div class="card-body">
+                <h2 class="mb-0">{{ overview.starred }}</h2>
+                <small class="text-muted">Starred</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info bg-opacity-25 text-center">
+            <div class="card-body">
+                <h2 class="mb-0">{{ overview.avg_score }}</h2>
+                <small class="text-muted">Avg Score</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body py-2">
+                <div class="fw-bold">{{ overview.avg_resolution_days }} days</div>
+                <small class="text-muted">Avg Resolution</small>
+            </div>
+        </div>
+    </div>
+    {% for status, count in overview.status_counts.items() %}
+    <div class="col-md-2">
+        <div class="card text-center">
+            <div class="card-body py-2">
+                <div class="fw-bold">{{ count }}</div>
+                <small class="text-muted">{{ status }}</small>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="row g-3">
+    <!-- Top Tickets -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Top Significance Tickets</div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr><th>ID</th><th>Score</th><th>Days</th><th>Subject</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for t in top_tickets %}
+                        <tr class="cursor-pointer" onclick="window.location='/tickets/{{ t.zendesk_id }}'">
+                            <td>
+                                {% if t.is_starred %}<i class="bi bi-star-fill text-warning"></i>{% endif %}
+                                {{ t.zendesk_id }}
+                            </td>
+                            <td><span class="badge score-badge score-{{ (t.final_score // 20) | int }}">{{ t.final_score | round(0) | int }}</span></td>
+                            <td>{{ t.resolution_days if t.resolution_days is not none else 'open' }}</td>
+                            <td>{{ (t.subject or 'Not enriched')[:40] }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recently Updated -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Recently Updated</div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0">
+                    <thead>
+                        <tr><th>ID</th><th>Score</th><th>Status</th><th>Updated</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for t in recent %}
+                        <tr class="cursor-pointer" onclick="window.location='/tickets/{{ t.zendesk_id }}'">
+                            <td>{{ t.zendesk_id }}</td>
+                            <td><span class="badge score-badge score-{{ (t.final_score // 20) | int if t.final_score else 0 }}">{{ t.final_score | round(0) | int if t.final_score else '-' }}</span></td>
+                            <td>{{ t.status }}</td>
+                            <td>{{ t.updated_at.strftime('%Y-%m-%d') if t.updated_at else '-' }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
