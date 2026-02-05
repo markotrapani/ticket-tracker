@@ -92,6 +92,10 @@ Composite score from up to three sources:
 - All fields nullable except zendesk_id and created_date
 - ZenDesk URL auto-generated from ticket ID
 
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the full project roadmap with current progress and planned features.
+
 ## Development Guidelines
 
 - All code stays within /ticket-tracker/ directory
