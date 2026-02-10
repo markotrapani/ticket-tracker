@@ -215,6 +215,28 @@
             </div>
         </div>
 
+        <!-- Category Suggestion -->
+        <div class="card mb-3">
+            <div class="card-header">Category Suggestion</div>
+            <div class="card-body">
+                <button class="btn btn-sm btn-outline-info w-100 mb-2" onclick="suggestCategory()">
+                    <i class="bi bi-magic"></i> Auto-suggest Category
+                </button>
+                <div id="category-suggestion" class="small"></div>
+            </div>
+        </div>
+
+        <!-- STAR Format -->
+        <div class="card mb-3">
+            <div class="card-header">STAR Format (Interview)</div>
+            <div class="card-body">
+                <button class="btn btn-sm btn-outline-primary w-100 mb-2" onclick="generateStar()">
+                    <i class="bi bi-chat-quote"></i> Generate STAR Format
+                </button>
+                <div id="star-format" class="small"></div>
+            </div>
+        </div>
+
         <!-- PDF Import -->
         <div class="card mb-3">
             <div class="card-header">Enrich from PDF</div>
@@ -333,5 +355,40 @@ document.getElementById('pdf-form').addEventListener('submit', async (e) => {
         document.getElementById('pdf-result').innerHTML = `<span class="text-danger">${data.error}</span>`;
     }
 });
+
+// Category suggestion
+async function suggestCategory() {
+    const el = document.getElementById('category-suggestion');
+    el.innerHTML = '<span class="text-muted">Analyzing...</span>';
+    const resp = await fetch(`/api/tickets/${ZENDESK_ID}/suggest-category`, {method: 'POST'});
+    const data = await resp.json();
+    if (data.suggested) {
+        el.innerHTML = `<strong>${data.suggested}</strong> (${Math.round(data.confidence*100)}% confidence)<br>
+            <small class="text-muted">Matched: ${Object.entries(data.matches).map(([k,v]) => k+': '+v.join(', ')).join(' | ')}</small><br>
+            <button class="btn btn-sm btn-outline-success mt-1" onclick="applyCategory('${data.suggested}')">Apply</button>`;
+    } else {
+        el.innerHTML = '<span class="text-muted">No category suggestion (add content to improve)</span>';
+    }
+}
+
+function applyCategory(cat) {
+    document.querySelector('[data-field="category"]').value = cat;
+    saveFields();
+    document.getElementById('category-suggestion').innerHTML = '<span class="text-success">Applied!</span>';
+}
+
+// STAR format
+async function generateStar() {
+    const el = document.getElementById('star-format');
+    el.innerHTML = '<span class="text-muted">Generating...</span>';
+    const resp = await fetch(`/api/tickets/${ZENDESK_ID}/star-format`);
+    const data = await resp.json();
+    el.innerHTML = `
+        <div class="mb-2"><strong>Situation:</strong><br>${data.situation}</div>
+        <div class="mb-2"><strong>Task:</strong><br>${data.task}</div>
+        <div class="mb-2"><strong>Action:</strong><br>${data.action}</div>
+        <div class="mb-2"><strong>Result:</strong><br>${data.result}</div>
+    `;
+}
 </script>
 {% endblock %}

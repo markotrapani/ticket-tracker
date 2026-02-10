@@ -1,8 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Interview Prep - Ticket Tracker{% endblock %}
 {% block content %}
-<h4 class="mb-3"><i class="bi bi-star-fill text-warning"></i> Interview Prep</h4>
-<p class="text-muted">Your starred and highest-scored tickets for interview preparation.</p>
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-star-fill text-warning"></i> Interview Prep</h4>
+    <button class="btn btn-sm btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> Print View</button>
+</div>
+<p class="text-muted no-print">Your starred and highest-scored tickets for interview preparation.</p>
+
+<!-- Skill Coverage Gaps -->
+<div class="card mb-4 no-print">
+    <div class="card-header">Skill Coverage Analysis</div>
+    <div class="card-body" id="skill-gaps-container">
+        <span class="text-muted">Loading skill analysis...</span>
+    </div>
+</div>
 
 {% if starred %}
 <h5 class="mt-4">Starred Tickets ({{ starred | length }})</h5>
@@ -38,7 +49,7 @@
     {% endfor %}
 </div>
 {% else %}
-<div class="alert alert-info">No starred tickets yet. Star tickets from the detail view to add them here.</div>
+<div class="alert alert-info no-print">No starred tickets yet. Star tickets from the detail view to add them here.</div>
 {% endif %}
 
 <h5 class="mt-4">Top Scored Tickets</h5>
@@ -63,12 +74,55 @@
     </tbody>
 </table>
 
-<div class="mt-4">
+<div class="mt-4 no-print">
     <a href="/api/export?format=markdown&starred=true" class="btn btn-outline-primary" download>
         <i class="bi bi-download"></i> Export Starred (Markdown)
+    </a>
+    <a href="/api/export?format=csv&min_score=30" class="btn btn-outline-success" download>
+        <i class="bi bi-download"></i> Export Top Scores (CSV)
     </a>
     <a href="/api/export?format=json&min_score=30" class="btn btn-outline-secondary" download>
         <i class="bi bi-download"></i> Export Top Scores (JSON)
     </a>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadSkillGaps() {
+    const resp = await fetch('/api/stats/skill-gaps');
+    const data = await resp.json();
+    const el = document.getElementById('skill-gaps-container');
+
+    if (data.total_starred === 0 && data.total_enriched === 0) {
+        el.innerHTML = '<p class="text-muted">Enrich and star tickets to see skill coverage analysis.</p>';
+        return;
+    }
+
+    let html = `<p><strong>${data.total_enriched}</strong> enriched, <strong>${data.total_starred}</strong> starred</p>`;
+
+    // Gaps
+    if (data.gaps.length > 0) {
+        html += '<div class="alert alert-warning py-2"><strong>Coverage Gaps:</strong><ul class="mb-0 small">';
+        data.gaps.forEach(g => {
+            html += `<li><strong>${g.skill}</strong> - ${g.suggestion}</li>`;
+        });
+        html += '</ul></div>';
+    } else {
+        html += '<div class="alert alert-success py-2 small">All skill categories covered in starred tickets!</div>';
+    }
+
+    // Coverage grid
+    html += '<div class="row g-2">';
+    for (const [skill, info] of Object.entries(data.starred_coverage)) {
+        const color = info.count > 0 ? 'success' : 'secondary';
+        html += `<div class="col-md-4"><span class="badge bg-${color} w-100 py-1">${skill}: ${info.count}</span></div>`;
+    }
+    html += '</div>';
+
+    el.innerHTML = html;
+}
+
+loadSkillGaps();
+</script>
 {% endblock %}

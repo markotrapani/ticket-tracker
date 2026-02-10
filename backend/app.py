@@ -27,9 +27,40 @@ def create_app(config=None):
 
     with app.app_context():
         db.create_all()
+        _init_fts(app)
 
     register_routes(app)
     return app
+
+
+def _init_fts(app):
+    """Initialize FTS5 virtual table for full-text search."""
+    with db.engine.connect() as conn:
+        conn.execute(db.text("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS tickets_fts USING fts5(
+                zendesk_id, subject, customer_name, description,
+                root_cause, resolution, interview_notes, category,
+                content='tickets',
+                content_rowid='id'
+            )
+        """))
+        conn.commit()
+
+
+def rebuild_fts():
+    """Rebuild FTS index from current ticket data."""
+    with db.engine.connect() as conn:
+        conn.execute(db.text("DELETE FROM tickets_fts"))
+        conn.execute(db.text("""
+            INSERT INTO tickets_fts(rowid, zendesk_id, subject, customer_name,
+                description, root_cause, resolution, interview_notes, category)
+            SELECT id, zendesk_id, COALESCE(subject,''), COALESCE(customer_name,''),
+                COALESCE(description,''), COALESCE(root_cause,''),
+                COALESCE(resolution,''), COALESCE(interview_notes,''),
+                COALESCE(category,'')
+            FROM tickets
+        """))
+        conn.commit()
 
 
 def register_routes(app):
@@ -332,6 +363,70 @@ def register_routes(app):
             'ticket': ticket.to_dict(),
         })
 
+    @app.route('/api/import/pdf/batch', methods=['POST'])
+    def api_import_pdf_batch():
+        """Upload multiple PDFs at once for batch enrichment."""
+        if 'files' not in request.files:
+            return jsonify({'error': 'No files uploaded'}), 400
+
+        files = request.files.getlist('files')
+        results = {'enriched': 0, 'not_found': [], 'no_id': [], 'errors': []}
+
+        for file in files:
+            if not file.filename.endswith('.pdf'):
+                results['errors'].append(f'{file.filename}: not a PDF')
+                continue
+
+            filepath = os.path.join(ATTACHMENTS_DIR, secure_filename(file.filename))
+            file.save(filepath)
+
+            try:
+                parsed = parse_zendesk_pdf(filepath)
+                ticket_id = parsed.get('ticket_id')
+                if not ticket_id:
+                    results['no_id'].append(file.filename)
+                    continue
+
+                ticket = Ticket.query.filter_by(zendesk_id=ticket_id).first()
+                if not ticket:
+                    results['not_found'].append(ticket_id)
+                    continue
+
+                if parsed.get('subject') and not ticket.subject:
+                    ticket.subject = parsed['subject']
+                if parsed.get('customer_name') and not ticket.customer_name:
+                    ticket.customer_name = parsed['customer_name']
+                if parsed.get('description'):
+                    ticket.description = parsed['description']
+
+                ticket.enrichment_level = 'full' if ticket.description else 'partial'
+                scoring.score_ticket(ticket)
+                ticket.updated_at = datetime.utcnow()
+                results['enriched'] += 1
+
+            except Exception as e:
+                results['errors'].append(f'{file.filename}: {str(e)}')
+
+        db.session.commit()
+        return jsonify(results)
+
+    @app.route('/api/utils/parse-zendesk-url', methods=['POST'])
+    def api_parse_zendesk_url():
+        """Extract ticket ID from a ZenDesk URL."""
+        import re
+        data = request.get_json()
+        url = data.get('url', '')
+        match = re.search(r'/tickets/(\d+)', url)
+        if match:
+            ticket_id = match.group(1)
+            ticket = Ticket.query.filter_by(zendesk_id=ticket_id).first()
+            return jsonify({
+                'ticket_id': ticket_id,
+                'exists': ticket is not None,
+                'url': f'https://redislabs.zendesk.com/agent/tickets/{ticket_id}',
+            })
+        return jsonify({'error': 'No ticket ID found in URL'}), 400
+
     @app.route('/api/import/paste', methods=['POST'])
     def api_import_paste():
         data = request.get_json()
@@ -371,7 +466,14 @@ def register_routes(app):
             scoring.score_ticket(ticket)
             count += 1
         db.session.commit()
+        rebuild_fts()
         return jsonify({'scored': count})
+
+    @app.route('/api/bulk/rebuild-fts', methods=['POST'])
+    def api_rebuild_fts():
+        """Rebuild the full-text search index."""
+        rebuild_fts()
+        return jsonify({'status': 'ok'})
 
     # ── API: Enrichment (for MCP / automation) ─────────────────
 
@@ -477,6 +579,65 @@ def register_routes(app):
     def api_stats_resolution():
         return jsonify(stats.get_resolution_time_distribution())
 
+    # ── API: Intelligence ──────────────────────────────────────────
+
+    @app.route('/api/tickets/<zendesk_id>/suggest-category', methods=['POST'])
+    def api_suggest_category(zendesk_id):
+        """Auto-suggest a category based on ticket content keywords."""
+        ticket = Ticket.query.filter_by(zendesk_id=zendesk_id).first_or_404()
+        suggestion = stats.suggest_category(ticket)
+        return jsonify(suggestion)
+
+    @app.route('/api/tickets/<zendesk_id>/star-format')
+    def api_star_format(zendesk_id):
+        """Generate STAR format (Situation, Task, Action, Result) for interview prep."""
+        ticket = Ticket.query.filter_by(zendesk_id=zendesk_id).first_or_404()
+        star = stats.generate_star_format(ticket)
+        return jsonify(star)
+
+    @app.route('/api/stats/skill-gaps')
+    def api_skill_gaps():
+        """Analyze skill coverage gaps across enriched/starred tickets."""
+        return jsonify(stats.get_skill_gaps())
+
+    @app.route('/api/stats/best-tickets')
+    def api_best_tickets():
+        """Auto-generate a diverse list of best tickets to mention in interviews."""
+        limit = request.args.get('limit', 15, type=int)
+        return jsonify(stats.get_best_tickets(limit))
+
+    @app.route('/api/stats/year-over-year')
+    def api_year_over_year():
+        return jsonify(stats.get_year_over_year())
+
+    @app.route('/api/stats/resolution-trends')
+    def api_resolution_trends():
+        return jsonify(stats.get_resolution_trends())
+
+    # ── API: Database Management ─────────────────────────────────
+
+    @app.route('/api/db/backup', methods=['POST'])
+    def api_db_backup():
+        """Create a timestamped backup of the SQLite database."""
+        import shutil
+        from backend.config import DATA_DIR
+        db_path = os.path.join(DATA_DIR, 'tickets.db')
+        backup_name = f"tickets_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
+        backup_path = os.path.join(DATA_DIR, backup_name)
+        shutil.copy2(db_path, backup_path)
+        return jsonify({'backup': backup_name, 'path': backup_path})
+
+    @app.route('/api/db/backups')
+    def api_db_list_backups():
+        """List available database backups."""
+        from backend.config import DATA_DIR
+        backups = []
+        for f in sorted(os.listdir(DATA_DIR)):
+            if f.startswith('tickets_backup_') and f.endswith('.db'):
+                path = os.path.join(DATA_DIR, f)
+                backups.append({'name': f, 'size_mb': round(os.path.getsize(path) / 1024 / 1024, 2)})
+        return jsonify(backups)
+
     # ── API: Search ──────────────────────────────────────────────
 
     @app.route('/api/search')
@@ -485,6 +646,26 @@ def register_routes(app):
         if not q:
             return jsonify({'tickets': [], 'total': 0})
 
+        # Try FTS5 first, fall back to LIKE
+        try:
+            fts_query = db.text("""
+                SELECT t.* FROM tickets t
+                JOIN tickets_fts fts ON t.id = fts.rowid
+                WHERE tickets_fts MATCH :query
+                ORDER BY t.final_score DESC NULLS LAST
+                LIMIT 50
+            """)
+            result_rows = db.session.execute(fts_query, {'query': q}).fetchall()
+            if result_rows:
+                ids = [r.id for r in result_rows]
+                results = Ticket.query.filter(Ticket.id.in_(ids)).order_by(
+                    Ticket.final_score.desc().nullslast()
+                ).all()
+                return jsonify({'tickets': [t.to_dict() for t in results], 'total': len(results)})
+        except Exception:
+            pass  # FTS not populated yet or query syntax issue
+
+        # LIKE fallback
         like = f'%{q}%'
         results = Ticket.query.filter(
             db.or_(
@@ -519,6 +700,23 @@ def register_routes(app):
 
         if fmt == 'json':
             return jsonify([t.to_dict() for t in tickets])
+        elif fmt == 'csv':
+            import csv
+            import io
+            from flask import Response
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow(['Ticket ID', 'Subject', 'Customer', 'Status', 'Category',
+                             'Product Area', 'Created', 'Solved', 'Resolution Days',
+                             'Score', 'Enrichment', 'Starred', 'Tags', 'Interview Notes'])
+            for t in tickets:
+                writer.writerow([t.zendesk_id, t.subject or '', t.customer_name or '',
+                                 t.status, t.category or '', t.product_area or '',
+                                 t.created_date, t.solved_date or '', t.resolution_days or '',
+                                 t.final_score or '', t.enrichment_level, t.is_starred,
+                                 ', '.join(t.tag_list), t.interview_notes or ''])
+            return Response(output.getvalue(), mimetype='text/csv',
+                            headers={'Content-Disposition': 'attachment; filename=tickets_export.csv'})
         elif fmt == 'markdown':
             lines = ['# Ticket Tracker Export\n']
             for t in tickets:

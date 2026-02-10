@@ -29,3 +29,19 @@
 /* Badge in tags */
 .badge .bi-x { cursor: pointer; opacity: 0.7; }
 .badge .bi-x:hover { opacity: 1; }
+
+/* Print styles */
+@media print {
+    .no-print, .navbar, .pagination, .btn, form { display: none !important; }
+    body { background: white !important; color: black !important; }
+    .card { border: 1px solid #ddd !important; break-inside: avoid; }
+    .card-header { background: #f5f5f5 !important; color: black !important; }
+    .badge { border: 1px solid #999 !important; }
+    a { color: black !important; text-decoration: none !important; }
+    a[href]:after { content: " (" attr(href) ")"; font-size: 0.8em; }
+}
+
+/* Loading spinner */
+.spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid rgba(255,255,255,0.3);
+           border-radius: 50%; border-top-color: #fff; animation: spin 0.6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

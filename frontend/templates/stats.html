@@ -30,18 +30,56 @@
             <div class="card-body"><canvas id="chart-categories"></canvas></div>
         </div>
     </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Year-over-Year Comparison</div>
+            <div class="card-body"><canvas id="chart-yoy"></canvas></div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Resolution Time Trends (Quarterly)</div>
+            <div class="card-body"><canvas id="chart-res-trends"></canvas></div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mt-3">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">Best Tickets to Mention in Interviews</div>
+            <div class="card-body p-0">
+                <table class="table table-sm table-hover mb-0" id="best-tickets-table">
+                    <thead><tr><th>ID</th><th>Score</th><th>Days</th><th>Category</th><th>Subject</th><th>Why Selected</th></tr></thead>
+                    <tbody id="best-tickets-body"><tr><td colspan="6" class="text-center text-muted">Loading...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-3">
+    <button class="btn btn-sm btn-outline-secondary" onclick="backupDb()"><i class="bi bi-database-down"></i> Backup Database</button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="rebuildFts()"><i class="bi bi-arrow-repeat"></i> Rebuild Search Index</button>
+    <span id="action-status" class="ms-2 small text-muted"></span>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const COLORS = ['#0d6efd','#198754','#ffc107','#dc3545','#6f42c1','#fd7e14','#20c997','#d63384'];
+
 async function loadStats() {
-    const [overview, timeline, scores, resolution, categories] = await Promise.all([
+    const [overview, timeline, scores, resolution, categories, yoy, resTrends, best] = await Promise.all([
         fetch('/api/stats/overview').then(r => r.json()),
         fetch('/api/stats/timeline').then(r => r.json()),
         fetch('/api/stats/score-distribution').then(r => r.json()),
         fetch('/api/stats/resolution-times').then(r => r.json()),
         fetch('/api/stats/categories').then(r => r.json()),
+        fetch('/api/stats/year-over-year').then(r => r.json()),
+        fetch('/api/stats/resolution-trends').then(r => r.json()),
+        fetch('/api/stats/best-tickets').then(r => r.json()),
     ]);
 
     // Overview cards
@@ -96,6 +134,75 @@ async function loadStats() {
     } else {
         document.getElementById('chart-categories').parentElement.innerHTML = '<p class="text-muted text-center">Categorize tickets to see breakdown</p>';
     }
+
+    // Year-over-Year
+    const years = Object.keys(yoy.years).sort();
+    if (years.length > 1) {
+        new Chart(document.getElementById('chart-yoy'), {
+            type: 'line',
+            data: {
+                labels: MONTH_LABELS,
+                datasets: years.map((yr, i) => ({
+                    label: yr,
+                    data: yoy.months.map(m => yoy.years[yr][m] || 0),
+                    borderColor: COLORS[i % COLORS.length],
+                    tension: 0.3,
+                    fill: false,
+                }))
+            },
+            options: {responsive: true}
+        });
+    } else {
+        document.getElementById('chart-yoy').parentElement.innerHTML = '<p class="text-muted text-center">Need multiple years of data</p>';
+    }
+
+    // Resolution Trends
+    if (resTrends.length > 0) {
+        new Chart(document.getElementById('chart-res-trends'), {
+            type: 'line',
+            data: {
+                labels: resTrends.map(r => r.period),
+                datasets: [{
+                    label: 'Avg Resolution (days)',
+                    data: resTrends.map(r => r.avg_days),
+                    borderColor: '#fd7e14',
+                    backgroundColor: 'rgba(253,126,20,0.1)',
+                    tension: 0.3,
+                    fill: true,
+                }]
+            },
+            options: {responsive: true, plugins: {legend: {display: false}}}
+        });
+    }
+
+    // Best Tickets
+    const tbody = document.getElementById('best-tickets-body');
+    if (best.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No scored tickets yet</td></tr>';
+    } else {
+        tbody.innerHTML = best.map(t => `
+            <tr class="cursor-pointer" onclick="window.location='/tickets/${t.zendesk_id}'">
+                <td><code>${t.zendesk_id}</code> ${t.is_starred ? '<i class="bi bi-star-fill text-warning"></i>' : ''}</td>
+                <td><span class="badge score-badge score-${Math.min(Math.floor((t.final_score||0)/20),4)}">${Math.round(t.final_score||0)}</span></td>
+                <td>${t.resolution_days !== null ? t.resolution_days : 'open'}</td>
+                <td>${t.category || ''}</td>
+                <td>${(t.subject || '').substring(0,40) || '<span class="text-muted">-</span>'}</td>
+                <td><small class="text-muted">${t.why}</small></td>
+            </tr>
+        `).join('');
+    }
+}
+
+async function backupDb() {
+    const resp = await fetch('/api/db/backup', {method: 'POST'});
+    const data = await resp.json();
+    document.getElementById('action-status').textContent = `Backup created: ${data.backup}`;
+}
+
+async function rebuildFts() {
+    document.getElementById('action-status').textContent = 'Rebuilding search index...';
+    await fetch('/api/bulk/rebuild-fts', {method: 'POST'});
+    document.getElementById('action-status').textContent = 'Search index rebuilt!';
 }
 
 loadStats();

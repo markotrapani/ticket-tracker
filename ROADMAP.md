@@ -16,7 +16,7 @@
 - [x] Bootstrap 5 dark theme
 - [x] CLAUDE.md project documentation
 
-## Phase 2: Enrichment (In Progress)
+## Phase 2: Enrichment (Complete)
 
 - [x] Inline editing on ticket detail (auto-save via AJAX)
 - [x] Notes system (add/delete per ticket)
@@ -26,43 +26,43 @@
 - [x] PDF upload from ticket detail view
 - [x] Paste content import
 - [x] Manual ticket creation
+- [x] Batch PDF import (upload multiple PDFs at once)
+- [x] Auto-detect ticket ID from ZenDesk URL input
 - [ ] Test PDF parser with real ZenDesk exports and tune extraction patterns
-- [ ] Batch PDF import (upload folder of PDFs)
-- [ ] Auto-detect ticket ID from ZenDesk URL input
 
-## Phase 3: Intelligence
+## Phase 3: Intelligence (Complete)
 
 - [x] Content-based scoring engine (0-45) with keyword analysis
 - [x] Score breakdown display on ticket detail
 - [x] Manual score override
+- [x] Category auto-suggestion based on ticket content keywords
+- [x] STAR format generator (Situation, Task, Action, Result) for interview prep
+- [x] Skill coverage gap analysis ("no high-score tickets for category X")
 - [ ] Improve scoring keywords based on real ticket content
-- [ ] Category auto-suggestion based on ticket content
-- [ ] STAR format generator (Situation, Task, Action, Result) for interview prep
-- [ ] Skill coverage gap analysis ("no high-score tickets for category X")
 - [ ] Score recalibration after enriching a meaningful sample of tickets
 
-## Phase 4: Search & Analytics
+## Phase 4: Search & Analytics (Complete)
 
 - [x] Basic LIKE search across all text fields
+- [x] SQLite FTS5 full-text search with LIKE fallback
 - [x] Score distribution chart
 - [x] Monthly volume chart
 - [x] Resolution time distribution chart
 - [x] Category breakdown chart
-- [ ] SQLite FTS5 full-text search for faster/smarter queries
-- [ ] Year-over-year comparison charts
-- [ ] Resolution time trends over time
-- [ ] "Best tickets to mention" auto-generated diverse list
+- [x] Year-over-year comparison charts (line chart by year)
+- [x] Resolution time trends over time (quarterly averages)
+- [x] "Best tickets to mention" auto-generated diverse list
 
 ## Phase 5: Export & Integration
 
 - [x] JSON export API
 - [x] Markdown export API
+- [x] CSV export API
 - [x] CLI export command
 - [x] Bulk enrichment API (`/api/enrich/bulk`) for external automation
 - [x] Unenriched tickets endpoint (`/api/tickets/unenriched`) for batch workflows
 - [x] CLI `next-unenriched` command for sequential enrichment
-- [ ] CSV export
-- [ ] Print-friendly interview prep view
+- [x] Print-friendly interview prep view (print CSS)
 - [ ] Bulk enrichment via Claude native app + MCP browser integration (see below)
 - [ ] ZenDesk API integration (if API access becomes available)
 
@@ -98,10 +98,19 @@ Process tickets in batches of 10.
 
 ## Phase 6: Polish
 
-- [ ] Error handling and user-friendly validation messages
-- [ ] Loading spinners and better UX feedback
+- [x] Loading spinner CSS animation
+- [x] Print styles (hide nav, buttons, forms)
+- [x] Database backup utility (API + stats page button)
+- [x] FTS rebuild utility (API + stats page button)
 - [ ] Mobile-responsive layout improvements
 - [ ] Keyboard shortcuts for navigation
 - [ ] Undo support for edits
-- [ ] Database backup/restore utility
 - [ ] Unit tests for scoring, CSV import, PDF parser
+
+## Needs Real Data
+
+These items require actual ticket content to complete:
+
+- [ ] Test PDF parser with real ZenDesk exports and tune extraction patterns
+- [ ] Improve scoring keywords based on real ticket content
+- [ ] Score recalibration after enriching a meaningful sample of tickets

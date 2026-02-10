@@ -8,6 +8,8 @@
     <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-pdf">PDF Import</a></li>
     <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-manual">Manual Entry</a></li>
     <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-paste">Paste Content</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-batch-pdf">Batch PDF</a></li>
+    <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tab-url">From URL</a></li>
 </ul>
 
 <div class="tab-content">
@@ -126,8 +128,36 @@
                 <div id="paste-result" class="mt-3"></div>
             </div>
         </div>
+    <!-- Batch PDF -->
+    <div class="tab-pane fade" id="tab-batch-pdf">
+        <div class="card">
+            <div class="card-body">
+                <p>Upload multiple ZenDesk PDFs at once. Ticket IDs are auto-detected from filenames.</p>
+                <form id="batch-pdf-form" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <input type="file" class="form-control" name="files" accept=".pdf" multiple required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Upload & Parse All</button>
+                </form>
+                <div id="batch-pdf-result" class="mt-3"></div>
+            </div>
+        </div>
     </div>
-</div>
+
+    <!-- From URL -->
+    <div class="tab-pane fade" id="tab-url">
+        <div class="card">
+            <div class="card-body">
+                <p>Paste a ZenDesk ticket URL to auto-detect the ticket ID and navigate to it.</p>
+                <div class="input-group mb-3">
+                    <input type="text" id="url-input" class="form-control" placeholder="https://redislabs.zendesk.com/agent/tickets/149320">
+                    <button class="btn btn-primary" onclick="parseUrl()">Lookup</button>
+                </div>
+                <div id="url-result"></div>
+            </div>
+        </div>
+    </div>
+    </div>
 
 {% endblock %}
 
@@ -213,5 +243,48 @@ document.getElementById('paste-form').addEventListener('submit', async (e) => {
         el.innerHTML = `<div class="alert alert-danger">${result.error}</div>`;
     }
 });
+
+// Batch PDF
+document.getElementById('batch-pdf-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const el = document.getElementById('batch-pdf-result');
+    el.innerHTML = '<div class="text-muted"><span class="spinner"></span> Processing PDFs...</div>';
+    const resp = await fetch('/api/import/pdf/batch', {method: 'POST', body: formData});
+    const data = await resp.json();
+    if (resp.ok) {
+        let msg = `Enriched: ${data.enriched}`;
+        if (data.not_found.length) msg += ` | Not in DB: ${data.not_found.join(', ')}`;
+        if (data.no_id.length) msg += ` | No ID detected: ${data.no_id.join(', ')}`;
+        if (data.errors.length) msg += ` | Errors: ${data.errors.join(', ')}`;
+        el.innerHTML = `<div class="alert alert-success">${msg}</div>`;
+    } else {
+        el.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+    }
+});
+
+// URL Lookup
+async function parseUrl() {
+    const url = document.getElementById('url-input').value.trim();
+    const el = document.getElementById('url-result');
+    if (!url) return;
+    const resp = await fetch('/api/utils/parse-zendesk-url', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url})
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+        if (data.exists) {
+            el.innerHTML = `<div class="alert alert-success">Ticket #${data.ticket_id} found!
+                <a href="/tickets/${data.ticket_id}" class="btn btn-sm btn-primary ms-2">View Ticket</a></div>`;
+        } else {
+            el.innerHTML = `<div class="alert alert-warning">Ticket #${data.ticket_id} not in database.
+                <a href="/import" class="btn btn-sm btn-outline-primary ms-2" onclick="document.querySelector('[href=\\'#tab-manual\\']').click()">Create it</a></div>`;
+        }
+    } else {
+        el.innerHTML = `<div class="alert alert-danger">${data.error}</div>`;
+    }
+}
 </script>
 {% endblock %}
