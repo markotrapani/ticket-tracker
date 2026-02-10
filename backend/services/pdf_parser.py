@@ -293,6 +293,196 @@ def _get_first_customer_message(comments):
     return None
 
 
+def build_summary(parsed):
+    """Build a concise situation summary for STAR format interviews.
+
+    Combines ticket metadata context with the initial customer problem
+    to create a 2-4 sentence overview suitable for the "Situation" part
+    of a STAR response.
+    """
+    parts = []
+
+    # Context: who, what product, when
+    customer = parsed.get('customer_name')
+    subject = parsed.get('subject')
+    product = parsed.get('product_line')
+    severity = parsed.get('severity')
+    priority = parsed.get('priority')
+    is_production = parsed.get('is_production', False)
+
+    context = ''
+    if customer:
+        context += f"Customer {customer}"
+    else:
+        context += "A customer"
+    if product:
+        context += f" using {product}"
+    if is_production:
+        context += " (production environment)"
+    if subject:
+        context += f" reported: {subject}."
+    else:
+        context += " reported an issue."
+    parts.append(context)
+
+    if severity or priority:
+        flag_parts = []
+        if priority:
+            flag_parts.append(f"Priority: {priority}")
+        if severity:
+            flag_parts.append(f"Severity: {severity}")
+        parts.append(' | '.join(flag_parts))
+
+    # Problem summary from metadata (if available)
+    problem_summary = parsed.get('root_cause', '')
+    if problem_summary:
+        parts.append(f"Problem: {problem_summary}")
+
+    # First customer message excerpt (the initial report)
+    comments = parsed.get('comments', [])
+    bot_authors = {'Redis Support Bot Agent', 'Analyzer Bot'}
+    first_msg = None
+    for c in comments:
+        if c.get('is_internal'):
+            continue
+        if c.get('author', '') in bot_authors:
+            continue
+        if 'This is an automated response' in c.get('body', ''):
+            continue
+        if c.get('body', '').strip():
+            first_msg = c['body'].strip()
+            break
+
+    if first_msg:
+        # Take a reasonable excerpt of the initial report
+        excerpt = first_msg[:600]
+        if len(first_msg) > 600:
+            # Try to break at a sentence boundary
+            last_period = excerpt.rfind('.')
+            if last_period > 300:
+                excerpt = excerpt[:last_period + 1]
+            else:
+                excerpt += '...'
+        parts.append(f"\nInitial report:\n{excerpt}")
+
+    return '\n'.join(parts).strip()
+
+
+def synthesize_investigation(parsed):
+    """Build rich root_cause, steps_taken, and resolution from conversation thread.
+
+    Returns 3 narratives for interview preparation:
+      - root_cause:  The technical root cause (what was wrong)
+      - steps_taken:  What the support engineer did (investigation, debugging,
+                      coordination with R&D, custom scripts, analysis)
+      - resolution:  The fix/workaround and outcome (what was delivered)
+
+    Data sources:
+      - Internal notes → steps_taken (engineer's investigation diary)
+      - Engineer public messages → resolution (technical explanations & solutions)
+      - Metadata summaries → root_cause / resolution headers
+    """
+    comments = parsed.get('comments', [])
+    customer_name = (parsed.get('customer_name') or '').lower()
+    metadata_root_cause = parsed.get('root_cause', '')
+    metadata_resolution = parsed.get('resolution', '')
+
+    bot_authors = {'redis support bot agent', 'analyzer bot'}
+
+    # Classify comments
+    internal_notes = []
+    engineer_messages = []
+
+    for c in comments:
+        author = c.get('author', '')
+        body = c.get('body', '').strip()
+        if not body or len(body) < 30:
+            continue
+        if author.lower() in bot_authors:
+            continue
+        if 'This is an automated response' in body:
+            continue
+
+        if c.get('is_internal'):
+            internal_notes.append(c)
+        elif not customer_name or customer_name not in author.lower():
+            # Not the customer, not a bot, not internal → engineer public message
+            engineer_messages.append(c)
+
+    # ── Root Cause ────────────────────────────────────────────
+    # The technical finding: what was actually wrong.
+    # Uses metadata summary + key technical findings from internal notes.
+    root_cause_parts = []
+    if metadata_root_cause:
+        root_cause_parts.append(metadata_root_cause)
+
+    # Look for internal notes that explain the root cause (contain diagnostic findings)
+    rca_keywords = [
+        'root cause', 'the issue is', 'the problem is', 'caused by',
+        'found that', 'turns out', 'because', 'due to', 'the reason',
+        'confirmed that', 'discovered', 'identified',
+    ]
+    for note in internal_notes:
+        body_lower = note['body'].lower()
+        if any(kw in body_lower for kw in rca_keywords):
+            body = note['body'].strip()
+            if len(body) > 1500:
+                body = body[:1500] + '...'
+            root_cause_parts.append(
+                f"\n[{note['author']} - {note['timestamp']}]\n{body}"
+            )
+
+    # ── Steps Taken ───────────────────────────────────────────
+    # What the support engineer specifically did: investigation steps,
+    # debugging, analysis, coordination with R&D, custom tooling.
+    # ALL internal notes are the engineer's investigation diary.
+    steps_parts = []
+    if internal_notes:
+        for note in internal_notes:
+            body = note['body'].strip()
+            if len(body) > 1500:
+                body = body[:1500] + '...'
+            steps_parts.append(
+                f"[{note['author']} - {note['timestamp']}]\n{body}"
+            )
+
+    # ── Resolution & Actions ──────────────────────────────────
+    # The fix/workaround: what was communicated and delivered to the customer.
+    # Uses metadata summary + substantive engineer public messages.
+    resolution_parts = []
+    if metadata_resolution:
+        resolution_parts.append(metadata_resolution)
+
+    if engineer_messages:
+        # Include the most substantive engineer messages (longest = most detail)
+        substantive = sorted(
+            engineer_messages, key=lambda c: len(c['body']), reverse=True
+        )
+        for msg in substantive[:6]:
+            body = msg['body'].strip()
+            if len(body) > 1500:
+                body = body[:1500] + '...'
+            resolution_parts.append(
+                f"\n[{msg['author']} - {msg['timestamp']}]\n{body}"
+            )
+
+    root_cause = '\n'.join(root_cause_parts).strip()
+    steps_taken = '\n\n---\n\n'.join(steps_parts).strip()
+    resolution = '\n'.join(resolution_parts).strip()
+
+    # Cap total length to keep DB manageable
+    for text, name in [(root_cause, 'root_cause'), (steps_taken, 'steps_taken'),
+                       (resolution, 'resolution')]:
+        if len(text) > 10000:
+            text = text[:10000] + '\n...(truncated)'
+
+    return (
+        root_cause or metadata_root_cause or '',
+        steps_taken or '',
+        resolution or metadata_resolution or '',
+    )
+
+
 def _clean_description(text):
     """Clean up extracted text, removing ZenDesk UI noise."""
     skip_patterns = [

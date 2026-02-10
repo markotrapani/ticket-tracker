@@ -12,7 +12,7 @@ from backend.models.database import db
 from backend.models.ticket import Ticket, TicketTag, TicketNote, ScoreHistory
 from backend.services import scoring, stats
 from backend.services.csv_importer import import_csv
-from backend.services.pdf_parser import parse_zendesk_pdf
+from backend.services.pdf_parser import parse_zendesk_pdf, synthesize_investigation, build_summary
 
 
 def create_app(config=None):
@@ -39,7 +39,7 @@ def _init_fts(app):
         conn.execute(db.text("""
             CREATE VIRTUAL TABLE IF NOT EXISTS tickets_fts USING fts5(
                 zendesk_id, subject, customer_name, description,
-                root_cause, resolution, interview_notes, category,
+                root_cause, steps_taken, resolution, interview_notes, category,
                 content='tickets',
                 content_rowid='id'
             )
@@ -53,11 +53,11 @@ def rebuild_fts():
         conn.execute(db.text("DELETE FROM tickets_fts"))
         conn.execute(db.text("""
             INSERT INTO tickets_fts(rowid, zendesk_id, subject, customer_name,
-                description, root_cause, resolution, interview_notes, category)
+                description, root_cause, steps_taken, resolution, interview_notes, category)
             SELECT id, zendesk_id, COALESCE(subject,''), COALESCE(customer_name,''),
                 COALESCE(description,''), COALESCE(root_cause,''),
-                COALESCE(resolution,''), COALESCE(interview_notes,''),
-                COALESCE(category,'')
+                COALESCE(steps_taken,''), COALESCE(resolution,''),
+                COALESCE(interview_notes,''), COALESCE(category,'')
             FROM tickets
         """))
         conn.commit()
@@ -185,8 +185,8 @@ def register_routes(app):
         ticket = Ticket.query.filter_by(zendesk_id=zendesk_id).first_or_404()
         data = request.get_json()
 
-        updatable = ['subject', 'customer_name', 'description', 'root_cause',
-                     'resolution', 'category', 'product_area', 'severity',
+        updatable = ['subject', 'customer_name', 'summary', 'description', 'root_cause',
+                     'steps_taken', 'resolution', 'category', 'product_area', 'severity',
                      'is_production_outage', 'is_escalation', 'involved_custom_scripts',
                      'interview_notes', 'skills_demonstrated']
 
@@ -341,16 +341,25 @@ def register_routes(app):
             ticket.subject = parsed['subject']
         if parsed.get('customer_name') and not ticket.customer_name:
             ticket.customer_name = parsed['customer_name']
-        if parsed.get('root_cause') and not ticket.root_cause:
-            ticket.root_cause = parsed['root_cause']
-        if parsed.get('resolution') and not ticket.resolution:
-            ticket.resolution = parsed['resolution']
         if parsed.get('severity') and not ticket.severity:
             ticket.severity = parsed['severity']
         if parsed.get('product_line') and not ticket.product_area:
             ticket.product_area = parsed['product_line']
         if parsed.get('is_production'):
             ticket.is_production_outage = True
+
+        # Build rich root_cause, steps_taken, resolution from conversation
+        rich_root_cause, rich_steps, rich_resolution = synthesize_investigation(parsed)
+        if rich_root_cause:
+            ticket.root_cause = rich_root_cause
+        elif parsed.get('root_cause') and not ticket.root_cause:
+            ticket.root_cause = parsed['root_cause']
+        if rich_steps:
+            ticket.steps_taken = rich_steps
+        if rich_resolution:
+            ticket.resolution = rich_resolution
+        elif parsed.get('resolution') and not ticket.resolution:
+            ticket.resolution = parsed['resolution']
 
         # Store conversation comments as TicketNotes
         comments = parsed.get('comments', [])
@@ -389,6 +398,9 @@ def register_routes(app):
             for c in public_comments:
                 desc_parts.append(f"[{c['author']} - {c['timestamp']}]\n{c['body']}")
             ticket.description = '\n\n---\n\n'.join(desc_parts)
+
+        # Build situation summary
+        ticket.summary = build_summary(parsed)
 
         # Enrichment level
         has_desc = bool(ticket.description)
@@ -598,8 +610,8 @@ def register_routes(app):
                 continue
 
             try:
-                enrichable = ['subject', 'customer_name', 'description', 'root_cause',
-                              'resolution', 'category', 'product_area', 'severity']
+                enrichable = ['subject', 'customer_name', 'summary', 'description', 'root_cause',
+                              'steps_taken', 'resolution', 'category', 'product_area', 'severity']
                 for field in enrichable:
                     if item.get(field):
                         setattr(ticket, field, item[field])

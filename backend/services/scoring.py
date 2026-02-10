@@ -87,8 +87,8 @@ class ContentScorer:
     def score(self, ticket):
         components = {}
         full_text = ' '.join(filter(None, [
-            ticket.description, ticket.root_cause, ticket.resolution,
-            ticket.interview_notes, ticket.subject
+            ticket.description, ticket.root_cause, ticket.steps_taken,
+            ticket.resolution, ticket.interview_notes, ticket.subject
         ])).lower()
 
         if not full_text.strip():

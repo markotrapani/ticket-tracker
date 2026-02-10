@@ -96,16 +96,24 @@
                         </select>
                     </div>
                     <div class="col-md-12">
-                        <label class="form-label fw-bold">Description</label>
-                        <textarea class="form-control form-control-sm editable" data-field="description" rows="6">{{ ticket.description or '' }}</textarea>
+                        <label class="form-label fw-bold">Summary <small class="text-muted">(STAR: Situation — what happened)</small></label>
+                        <textarea class="form-control form-control-sm editable" data-field="summary" rows="5" style="white-space: pre-wrap; font-size: 0.85rem;">{{ ticket.summary or '' }}</textarea>
                     </div>
-                    <div class="col-md-6">
-                        <label class="form-label fw-bold">Root Cause</label>
-                        <textarea class="form-control form-control-sm editable" data-field="root_cause" rows="3">{{ ticket.root_cause or '' }}</textarea>
+                    <div class="col-md-12">
+                        <label class="form-label fw-bold">Root Cause <small class="text-muted">(STAR: Situation — what was technically wrong)</small></label>
+                        <textarea class="form-control form-control-sm editable" data-field="root_cause" rows="8" style="white-space: pre-wrap; font-size: 0.85rem;">{{ ticket.root_cause or '' }}</textarea>
                     </div>
-                    <div class="col-md-6">
-                        <label class="form-label fw-bold">Resolution</label>
-                        <textarea class="form-control form-control-sm editable" data-field="resolution" rows="3">{{ ticket.resolution or '' }}</textarea>
+                    <div class="col-md-12">
+                        <label class="form-label fw-bold">Steps Taken <small class="text-muted">(STAR: Action — what the engineer did)</small></label>
+                        <textarea class="form-control form-control-sm editable" data-field="steps_taken" rows="10" style="white-space: pre-wrap; font-size: 0.85rem;">{{ ticket.steps_taken or '' }}</textarea>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label fw-bold">Resolution <small class="text-muted">(STAR: Result — the fix/workaround delivered)</small></label>
+                        <textarea class="form-control form-control-sm editable" data-field="resolution" rows="8" style="white-space: pre-wrap; font-size: 0.85rem;">{{ ticket.resolution or '' }}</textarea>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label fw-bold">Full Conversation <small class="text-muted">({{ ticket.description|length if ticket.description else 0 }} chars — see Conversation Thread below)</small></label>
+                        <textarea class="form-control form-control-sm" rows="3" style="font-size: 0.8rem;" readonly>{{ (ticket.description or '')[:500] }}{% if ticket.description and ticket.description|length > 500 %}...{% endif %}</textarea>
                     </div>
                     <div class="col-md-12">
                         <div class="form-check form-check-inline">

@@ -188,15 +188,18 @@ def generate_star_format(ticket):
     days = ticket.resolution_days
     days_str = f"{days} days" if days is not None else "ongoing"
 
-    situation = f"A {ticket.status.lower()} support ticket (#{ticket.zendesk_id}) "
-    if ticket.customer_name:
-        situation += f"from {ticket.customer_name} "
-    situation += f"opened on {ticket.created_date}"
-    if ticket.category:
-        situation += f" related to {ticket.category}"
-    situation += "."
-    if ticket.subject:
-        situation += f" The issue: {ticket.subject}."
+    if ticket.summary:
+        situation = ticket.summary[:800]
+    else:
+        situation = f"A {ticket.status.lower()} support ticket (#{ticket.zendesk_id}) "
+        if ticket.customer_name:
+            situation += f"from {ticket.customer_name} "
+        situation += f"opened on {ticket.created_date}"
+        if ticket.category:
+            situation += f" related to {ticket.category}"
+        situation += "."
+        if ticket.subject:
+            situation += f" The issue: {ticket.subject}."
 
     task = "As the assigned L3 support engineer, I needed to "
     if ticket.is_production_outage:
@@ -208,18 +211,20 @@ def generate_star_format(ticket):
     task += f"The ticket was open for {days_str}."
 
     action = ""
-    if ticket.description:
+    if ticket.steps_taken:
+        action = ticket.steps_taken[:800]
+    elif ticket.description:
         action = ticket.description[:300]
-    if ticket.root_cause:
+    if ticket.root_cause and not ticket.steps_taken:
         action += f"\n\nRoot cause identified: {ticket.root_cause[:200]}"
     if ticket.involved_custom_scripts:
         action += "\nDeveloped custom scripts/tooling as part of the resolution."
     if not action:
-        action = "(Enrich this ticket with description and root cause to auto-generate this section)"
+        action = "(Enrich this ticket with a PDF or paste to auto-generate this section)"
 
     result = ""
     if ticket.resolution:
-        result = ticket.resolution[:300]
+        result = ticket.resolution[:800]
     if ticket.solved_date:
         result += f"\nResolved on {ticket.solved_date} ({days_str})."
     if not result.strip():

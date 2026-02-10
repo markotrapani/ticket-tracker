@@ -16,8 +16,10 @@ class Ticket(db.Model):
     # Enrichment fields
     subject = db.Column(db.String(500), nullable=True)
     customer_name = db.Column(db.String(200), nullable=True)
+    summary = db.Column(db.Text, nullable=True)
     description = db.Column(db.Text, nullable=True)
     root_cause = db.Column(db.Text, nullable=True)
+    steps_taken = db.Column(db.Text, nullable=True)
     resolution = db.Column(db.Text, nullable=True)
     zendesk_url = db.Column(db.String(300), nullable=True)
 
@@ -75,8 +77,10 @@ class Ticket(db.Model):
             'resolution_days': self.resolution_days,
             'subject': self.subject,
             'customer_name': self.customer_name,
+            'summary': self.summary,
             'description': self.description,
             'root_cause': self.root_cause,
+            'steps_taken': self.steps_taken,
             'resolution': self.resolution,
             'zendesk_url': self.zendesk_url,
             'category': self.category,
