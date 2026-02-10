@@ -301,10 +301,10 @@
         </div>
 
         <!-- Related Tickets -->
-        {% if related_tickets %}
         <div class="card mb-3">
-            <div class="card-header">Related Tickets ({{ related_tickets | length }})</div>
+            <div class="card-header">Related Tickets{% if related_tickets %} ({{ related_tickets | length }}){% endif %}</div>
             <div class="card-body">
+                {% if related_tickets %}
                 {% for ref in related_tickets %}
                 <div class="mb-2 pb-2 {{ 'border-bottom' if not loop.last else '' }}">
                     {% if ref.exists %}
@@ -319,9 +319,11 @@
                     {% endif %}
                 </div>
                 {% endfor %}
+                {% else %}
+                <p class="text-muted small mb-0">No related tickets detected in conversation.</p>
+                {% endif %}
             </div>
         </div>
-        {% endif %}
 
         <!-- Category Suggestion -->
         <div class="card mb-3">
