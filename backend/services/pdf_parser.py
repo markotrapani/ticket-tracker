@@ -43,6 +43,9 @@ def parse_zendesk_pdf(pdf_path):
     first_customer_msg = _get_first_customer_message(comments)
     description = first_customer_msg or metadata.get('problem_summary') or ''
 
+    # Extract related ticket IDs from conversation cross-references
+    related_ids = _extract_related_ticket_ids(full_text, ticket_id)
+
     result = {
         'ticket_id': ticket_id,
         'subject': metadata.get('subject'),
@@ -57,6 +60,17 @@ def parse_zendesk_pdf(pdf_path):
         'is_production': metadata.get('is_production', False),
         'comments': comments,
         'full_text': full_text,
+        # Zendesk infrastructure metadata
+        'additional_products': metadata.get('additional_products'),
+        'jira_ticket_ids': metadata.get('jira_ticket_ids'),
+        'subscription_id': metadata.get('subscription_id'),
+        'bdb_id': metadata.get('bdb_id'),
+        'endpoint': metadata.get('endpoint'),
+        'customer_impact': metadata.get('customer_impact'),
+        'issue_type': metadata.get('issue_type'),
+        'problem_summary_zd': metadata.get('problem_summary'),
+        'resolution_summary_zd': metadata.get('resolution_summary'),
+        'related_ticket_ids': related_ids,
     }
 
     return result
@@ -177,6 +191,81 @@ def _extract_metadata(page1_text):
                 if 'Yes' in line or (i + 1 < len(lines) and 'Yes' in lines[i + 1]):
                     meta['is_production'] = True
 
+    # Additional Products (e.g. "RedisSearch", "RedisJSON", "RedisTimeSeries")
+    for line in lines:
+        product_match = re.search(r'(?:Redis(?:Search|JSON|TimeSeries|Graph|Bloom|AI|Gears))', line)
+        if product_match:
+            # Collect all Redis module names from the line
+            modules = re.findall(r'Redis(?:Search|JSON|TimeSeries|Graph|Bloom|AI|Gears)', line)
+            if modules:
+                meta['additional_products'] = ', '.join(sorted(set(modules)))
+                break
+    # Also check for "additional_products_*" patterns from flattened metadata
+    if 'additional_products' not in meta:
+        for line in lines:
+            ap_match = re.search(r'additional_products[_\s]+(\S+)', line, re.IGNORECASE)
+            if ap_match:
+                val = ap_match.group(1).replace('_', ' ').strip()
+                if val and val.lower() not in ('none', '-', 'n/a'):
+                    meta['additional_products'] = val
+                    break
+
+    # Jira Ticket IDs (e.g. "RED-186318")
+    jira_ids = re.findall(r'\b([A-Z]+-\d{4,})\b', text)
+    if jira_ids:
+        meta['jira_ticket_ids'] = ', '.join(sorted(set(jira_ids)))
+
+    # Subscription ID (e.g. "PRO-gcp-us-central1-MGGZQLW9")
+    sub_match = re.search(r'\b((?:PRO|FLEX|PAY|FREE|ESS)-[\w-]+)\b', text)
+    if sub_match:
+        meta['subscription_id'] = sub_match.group(1)
+
+    # BDB ID (numeric, typically 7-8 digits, near "BDB" label)
+    for line in lines:
+        bdb_match = re.search(r'(?:BDB\s*(?:ID)?)\s*[:\s]*(\d{5,10})', line, re.IGNORECASE)
+        if bdb_match:
+            meta['bdb_id'] = bdb_match.group(1)
+            break
+
+    # Endpoint (Redis Cloud endpoint URL pattern)
+    ep_match = re.search(r'\b(redis-\d+\.[\w.-]+\.cloud\.rlrcp\.com:\d+)\b', text)
+    if ep_match:
+        meta['endpoint'] = ep_match.group(1)
+    else:
+        # Broader endpoint pattern
+        ep_match = re.search(r'\b(redis-\d+[\w.-]+:\d{4,5})\b', text)
+        if ep_match:
+            meta['endpoint'] = ep_match.group(1)
+
+    # Customer Impact
+    for i, line in enumerate(lines):
+        if 'Customer Impact' in line and i + 1 < len(lines):
+            val_line = lines[i + 1].strip()
+            impact_match = re.match(r'^(Critical|Major|Moderate|Minor|Other|None)\b', val_line)
+            if impact_match:
+                meta['customer_impact'] = impact_match.group(1)
+            elif 'Customer Impact' not in val_line:
+                # Could be on same line with value
+                impact_match = re.search(r'Customer Impact\s*[:\s]*(Critical|Major|Moderate|Minor|Other)', line)
+                if impact_match:
+                    meta['customer_impact'] = impact_match.group(1)
+            break
+
+    # Issue Type
+    for i, line in enumerate(lines):
+        if 'Issue Type' in line and 'Origin' not in line:
+            # Value might be on same line or next line
+            it_match = re.search(r'Issue Type\s*[:\s]*([A-Za-z][\w\s/]+)', line)
+            if it_match:
+                val = it_match.group(1).strip().rstrip('-')
+                if val and val not in ('Issue Type',):
+                    meta['issue_type'] = val
+            elif i + 1 < len(lines):
+                val = lines[i + 1].strip().rstrip('-').strip()
+                if val and val != '-':
+                    meta['issue_type'] = val
+            break
+
     return meta
 
 
@@ -296,91 +385,43 @@ def _get_first_customer_message(comments):
 def build_summary(parsed):
     """Build a concise situation summary for STAR format interviews.
 
-    Combines ticket metadata context with the initial customer problem
-    to create a 2-4 sentence overview suitable for the "Situation" part
-    of a STAR response.
+    Creates a structured overview from ticket metadata and the initial
+    customer problem. This is a heuristic baseline - for higher quality,
+    use the AI enrichment workflow (get_ticket_for_analysis + save_ticket_analysis).
     """
     parts = []
 
-    # Context: who, what product, when
     customer = parsed.get('customer_name')
     subject = parsed.get('subject')
     product = parsed.get('product_line')
-    severity = parsed.get('severity')
-    priority = parsed.get('priority')
     is_production = parsed.get('is_production', False)
 
-    context = ''
-    if customer:
-        context += f"Customer {customer}"
-    else:
-        context += "A customer"
+    # One-liner context
+    context = customer or "A customer"
     if product:
-        context += f" using {product}"
+        context += f" ({product})"
     if is_production:
-        context += " (production environment)"
+        context += " [PRODUCTION]"
     if subject:
-        context += f" reported: {subject}."
-    else:
-        context += " reported an issue."
+        context += f" - {subject}"
     parts.append(context)
 
-    if severity or priority:
-        flag_parts = []
-        if priority:
-            flag_parts.append(f"Priority: {priority}")
-        if severity:
-            flag_parts.append(f"Severity: {severity}")
-        parts.append(' | '.join(flag_parts))
-
-    # Problem summary from metadata (if available)
+    # Zendesk problem summary if available
     problem_summary = parsed.get('root_cause', '')
     if problem_summary:
         parts.append(f"Problem: {problem_summary}")
-
-    # First customer message excerpt (the initial report)
-    comments = parsed.get('comments', [])
-    bot_authors = {'Redis Support Bot Agent', 'Analyzer Bot'}
-    first_msg = None
-    for c in comments:
-        if c.get('is_internal'):
-            continue
-        if c.get('author', '') in bot_authors:
-            continue
-        if 'This is an automated response' in c.get('body', ''):
-            continue
-        if c.get('body', '').strip():
-            first_msg = c['body'].strip()
-            break
-
-    if first_msg:
-        # Take a reasonable excerpt of the initial report
-        excerpt = first_msg[:600]
-        if len(first_msg) > 600:
-            # Try to break at a sentence boundary
-            last_period = excerpt.rfind('.')
-            if last_period > 300:
-                excerpt = excerpt[:last_period + 1]
-            else:
-                excerpt += '...'
-        parts.append(f"\nInitial report:\n{excerpt}")
 
     return '\n'.join(parts).strip()
 
 
 def synthesize_investigation(parsed):
-    """Build rich root_cause, steps_taken, and resolution from conversation thread.
+    """Build baseline root_cause, steps_taken, and resolution from conversation.
 
-    Returns 3 narratives for interview preparation:
-      - root_cause:  The technical root cause (what was wrong)
-      - steps_taken:  What the support engineer did (investigation, debugging,
-                      coordination with R&D, custom scripts, analysis)
-      - resolution:  The fix/workaround and outcome (what was delivered)
+    Extracts key sentences from internal notes and engineer messages rather
+    than dumping full comment bodies. This is a heuristic baseline - for
+    higher quality, use the AI enrichment workflow.
 
-    Data sources:
-      - Internal notes → steps_taken (engineer's investigation diary)
-      - Engineer public messages → resolution (technical explanations & solutions)
-      - Metadata summaries → root_cause / resolution headers
+    Returns (root_cause, steps_taken, resolution) as strings.
     """
     comments = parsed.get('comments', [])
     customer_name = (parsed.get('customer_name') or '').lower()
@@ -406,17 +447,14 @@ def synthesize_investigation(parsed):
         if c.get('is_internal'):
             internal_notes.append(c)
         elif not customer_name or customer_name not in author.lower():
-            # Not the customer, not a bot, not internal → engineer public message
             engineer_messages.append(c)
 
     # ── Root Cause ────────────────────────────────────────────
-    # The technical finding: what was actually wrong.
-    # Uses metadata summary + key technical findings from internal notes.
+    # Extract sentences containing diagnostic keywords from internal notes
     root_cause_parts = []
     if metadata_root_cause:
         root_cause_parts.append(metadata_root_cause)
 
-    # Look for internal notes that explain the root cause (contain diagnostic findings)
     rca_keywords = [
         'root cause', 'the issue is', 'the problem is', 'caused by',
         'found that', 'turns out', 'because', 'due to', 'the reason',
@@ -425,64 +463,124 @@ def synthesize_investigation(parsed):
     for note in internal_notes:
         body_lower = note['body'].lower()
         if any(kw in body_lower for kw in rca_keywords):
-            body = note['body'].strip()
-            if len(body) > 1500:
-                body = body[:1500] + '...'
-            root_cause_parts.append(
-                f"\n[{note['author']} - {note['timestamp']}]\n{body}"
-            )
+            # Extract just the relevant sentences, not the full note
+            sentences = _extract_relevant_sentences(note['body'], rca_keywords)
+            if sentences:
+                root_cause_parts.append(sentences)
 
     # ── Steps Taken ───────────────────────────────────────────
-    # What the support engineer specifically did: investigation steps,
-    # debugging, analysis, coordination with R&D, custom tooling.
-    # ALL internal notes are the engineer's investigation diary.
+    # Create a chronological bullet list of investigation actions
     steps_parts = []
-    if internal_notes:
-        for note in internal_notes:
-            body = note['body'].strip()
-            if len(body) > 1500:
-                body = body[:1500] + '...'
-            steps_parts.append(
-                f"[{note['author']} - {note['timestamp']}]\n{body}"
-            )
+    for note in internal_notes:
+        # One-line summary of each internal note
+        first_line = note['body'].strip().split('\n')[0][:200]
+        ts = note.get('timestamp', '')
+        steps_parts.append(f"- [{ts}] {first_line}")
 
-    # ── Resolution & Actions ──────────────────────────────────
-    # The fix/workaround: what was communicated and delivered to the customer.
-    # Uses metadata summary + substantive engineer public messages.
+    # ── Resolution ────────────────────────────────────────────
+    # Use metadata resolution + the last substantive engineer message
     resolution_parts = []
     if metadata_resolution:
         resolution_parts.append(metadata_resolution)
 
     if engineer_messages:
-        # Include the most substantive engineer messages (longest = most detail)
-        substantive = sorted(
-            engineer_messages, key=lambda c: len(c['body']), reverse=True
-        )
-        for msg in substantive[:6]:
-            body = msg['body'].strip()
-            if len(body) > 1500:
-                body = body[:1500] + '...'
-            resolution_parts.append(
-                f"\n[{msg['author']} - {msg['timestamp']}]\n{body}"
-            )
+        # Last engineer message is usually the resolution
+        last_msg = engineer_messages[-1]
+        body = last_msg['body'].strip()
+        if len(body) > 500:
+            body = body[:500] + '...'
+        resolution_parts.append(body)
 
     root_cause = '\n'.join(root_cause_parts).strip()
-    steps_taken = '\n\n---\n\n'.join(steps_parts).strip()
+    steps_taken = '\n'.join(steps_parts).strip()
     resolution = '\n'.join(resolution_parts).strip()
 
-    # Cap total length to keep DB manageable
-    if len(root_cause) > 10000:
-        root_cause = root_cause[:10000] + '\n...(truncated)'
-    if len(steps_taken) > 10000:
-        steps_taken = steps_taken[:10000] + '\n...(truncated)'
-    if len(resolution) > 10000:
-        resolution = resolution[:10000] + '\n...(truncated)'
+    # Cap lengths
+    if len(root_cause) > 3000:
+        root_cause = root_cause[:3000] + '\n...(truncated)'
+    if len(steps_taken) > 5000:
+        steps_taken = steps_taken[:5000] + '\n...(truncated)'
+    if len(resolution) > 3000:
+        resolution = resolution[:3000] + '\n...(truncated)'
 
     return (
         root_cause or metadata_root_cause or '',
         steps_taken or '',
         resolution or metadata_resolution or '',
     )
+
+
+def _extract_relevant_sentences(text, keywords):
+    """Extract sentences from text that contain any of the given keywords."""
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    relevant = []
+    for sentence in sentences:
+        if any(kw in sentence.lower() for kw in keywords):
+            clean = sentence.strip()
+            if len(clean) > 300:
+                clean = clean[:300] + '...'
+            relevant.append(clean)
+    return ' '.join(relevant[:3])  # Max 3 relevant sentences
+
+
+def _extract_related_ticket_ids(full_text, own_ticket_id):
+    """Extract related Zendesk ticket IDs mentioned in the conversation.
+
+    Looks for #NNNNN patterns (5-6 digit numbers preceded by #) in the
+    conversation text. Excludes the ticket's own ID and filters out
+    references from page headers (which repeat the ticket's own ID).
+
+    Returns a list of dicts: [{'id': '133023', 'context': 'brief description'}]
+    """
+    own_id = str(own_ticket_id) if own_ticket_id else ''
+    lines = full_text.split('\n')
+
+    # Page header pattern - these contain the ticket's own ID, skip them
+    page_header = re.compile(r'^\d+/\d+/\d+,\s+\d+:\d+\s+[AP]M\s+#\d+')
+    page_footer = re.compile(r'^about:blank\s+\d+/\d+$')
+
+    # Collect all #NNNNN references with surrounding context
+    refs = {}  # id -> list of context strings
+    for i, line in enumerate(lines):
+        # Skip page headers/footers
+        if page_header.match(line) or page_footer.match(line):
+            continue
+
+        # Find all #NNNNN patterns (5-6 digits = Zendesk ticket range)
+        for match in re.finditer(r'#(\d{5,6})\b', line):
+            ref_id = match.group(1)
+            if ref_id == own_id:
+                continue
+
+            # Grab surrounding context (current line + 1 line before/after)
+            context_lines = []
+            if i > 0 and not page_header.match(lines[i-1]):
+                context_lines.append(lines[i-1].strip())
+            context_lines.append(line.strip())
+            if i + 1 < len(lines) and not page_footer.match(lines[i+1]):
+                context_lines.append(lines[i+1].strip())
+
+            context = ' '.join(context_lines).strip()
+            # Truncate long context
+            if len(context) > 200:
+                # Center around the match
+                pos = context.find(f'#{ref_id}')
+                start = max(0, pos - 80)
+                end = min(len(context), pos + 80)
+                context = ('...' if start > 0 else '') + context[start:end] + ('...' if end < len(context) else '')
+
+            if ref_id not in refs:
+                refs[ref_id] = []
+            refs[ref_id].append(context)
+
+    # Build result with deduplicated contexts
+    result = []
+    for ref_id in sorted(refs.keys()):
+        # Use the first (usually most informative) context
+        context = refs[ref_id][0]
+        result.append({'id': ref_id, 'context': context})
+
+    return result
 
 
 def _clean_description(text):

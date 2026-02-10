@@ -42,6 +42,58 @@
             </div>
         </div>
 
+        <!-- Infrastructure Metadata -->
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between">
+                <span>Infrastructure & Zendesk Fields</span>
+                <small class="text-muted" id="infra-save-status"></small>
+            </div>
+            <div class="card-body">
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold small">Product Line</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="product_line" value="{{ ticket.product_line or '' }}" placeholder="e.g. Pro (RV)">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold small">Additional Products</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="additional_products" value="{{ ticket.additional_products or '' }}" placeholder="e.g. RedisSearch">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold small">Customer Impact</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="customer_impact" value="{{ ticket.customer_impact or '' }}" placeholder="e.g. Critical">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold small">Issue Type</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="issue_type" value="{{ ticket.issue_type or '' }}">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold small">Subscription ID</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="subscription_id" value="{{ ticket.subscription_id or '' }}" placeholder="e.g. PRO-gcp-us-central1-...">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold small">BDB ID</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="bdb_id" value="{{ ticket.bdb_id or '' }}">
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label fw-bold small">Endpoint</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="endpoint" value="{{ ticket.endpoint or '' }}" placeholder="redis-XXXXX.....cloud.rlrcp.com:NNNNN">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold small">Jira Ticket IDs</label>
+                        <input type="text" class="form-control form-control-sm editable" data-field="jira_ticket_ids" value="{{ ticket.jira_ticket_ids or '' }}" placeholder="e.g. RED-186318">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold small">Problem Summary <small class="text-muted">(Zendesk)</small></label>
+                        <textarea class="form-control form-control-sm editable" data-field="problem_summary_zd" rows="2" style="font-size: 0.85rem;">{{ ticket.problem_summary_zd or '' }}</textarea>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold small">Resolution Summary <small class="text-muted">(Zendesk)</small></label>
+                        <textarea class="form-control form-control-sm editable" data-field="resolution_summary_zd" rows="2" style="font-size: 0.85rem;">{{ ticket.resolution_summary_zd or '' }}</textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Editable Fields -->
         <div class="card mb-3">
             <div class="card-header d-flex justify-content-between">
@@ -111,10 +163,6 @@
                     <div class="col-md-12">
                         <label class="form-label fw-bold">Resolution <small class="text-muted">(STAR: Result — the fix/workaround delivered)</small></label>
                         <textarea class="form-control form-control-sm editable" data-field="resolution" rows="8" style="white-space: pre-wrap; font-size: 0.85rem;">{{ ticket.resolution or '' }}</textarea>
-                    </div>
-                    <div class="col-md-12">
-                        <label class="form-label fw-bold">Full Conversation <small class="text-muted">({{ ticket.description|length if ticket.description else 0 }} chars — see Conversation Thread below)</small></label>
-                        <textarea class="form-control form-control-sm" rows="3" style="font-size: 0.8rem;" readonly>{{ (ticket.description or '')[:500] }}{% if ticket.description and ticket.description|length > 500 %}...{% endif %}</textarea>
                     </div>
                     <div class="col-md-12">
                         <div class="form-check form-check-inline">
@@ -252,6 +300,29 @@
             </div>
         </div>
 
+        <!-- Related Tickets -->
+        {% if related_tickets %}
+        <div class="card mb-3">
+            <div class="card-header">Related Tickets ({{ related_tickets | length }})</div>
+            <div class="card-body">
+                {% for ref in related_tickets %}
+                <div class="mb-2 pb-2 {{ 'border-bottom' if not loop.last else '' }}">
+                    {% if ref.exists %}
+                    <a href="/tickets/{{ ref.id }}" class="fw-bold">#{{ ref.id }}</a>
+                    {% if ref.subject %}<span class="text-muted small ms-1">{{ ref.subject }}</span>{% endif %}
+                    {% else %}
+                    <a href="https://redislabs.zendesk.com/agent/tickets/{{ ref.id }}" target="_blank" class="fw-bold text-secondary">#{{ ref.id }}</a>
+                    <span class="badge bg-secondary ms-1" style="font-size:0.6rem">Not in DB</span>
+                    {% endif %}
+                    {% if ref.context %}
+                    <div class="text-muted small mt-1" style="font-size:0.75rem">{{ ref.context }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Category Suggestion -->
         <div class="card mb-3">
             <div class="card-header">Category Suggestion</div>
@@ -286,6 +357,21 @@
                 <div id="pdf-result" class="mt-2 small"></div>
             </div>
         </div>
+
+        {% if ticket.enrichment_level != 'metadata_only' %}
+        <!-- Reset Enrichment -->
+        <div class="card mb-3 border-warning">
+            <div class="card-header text-warning">Reset Enrichment</div>
+            <div class="card-body">
+                <p class="small text-muted mb-2">Clear all enriched data and reset to metadata_only.
+                Preserves CSV metadata, tags, manual notes, and stars.</p>
+                <button class="btn btn-sm btn-outline-warning w-100" onclick="resetEnrichment()">
+                    <i class="bi bi-arrow-counterclockwise"></i> Reset to Metadata Only
+                </button>
+                <div id="reset-result" class="mt-2 small"></div>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -412,6 +498,21 @@ function applyCategory(cat) {
     document.querySelector('[data-field="category"]').value = cat;
     saveFields();
     document.getElementById('category-suggestion').innerHTML = '<span class="text-success">Applied!</span>';
+}
+
+// Reset enrichment
+async function resetEnrichment() {
+    if (!confirm('Reset this ticket to metadata_only? All enriched content (description, root cause, resolution, conversation notes) will be cleared.')) return;
+    const el = document.getElementById('reset-result');
+    el.innerHTML = '<span class="text-muted">Resetting...</span>';
+    const resp = await fetch(`/api/tickets/${ZENDESK_ID}/reset-enrichment`, {method: 'POST'});
+    const data = await resp.json();
+    if (resp.ok) {
+        el.innerHTML = '<span class="text-success">Reset complete! Reloading...</span>';
+        setTimeout(() => location.reload(), 1000);
+    } else {
+        el.innerHTML = `<span class="text-danger">${data.error || 'Reset failed'}</span>`;
+    }
 }
 
 // STAR format

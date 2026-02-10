@@ -32,6 +32,19 @@ class Ticket(db.Model):
     is_escalation = db.Column(db.Boolean, default=False)
     involved_custom_scripts = db.Column(db.Boolean, default=False)
 
+    # Zendesk infrastructure metadata
+    product_line = db.Column(db.String(100), nullable=True)       # e.g. "Pro (RV)", "Essentials"
+    additional_products = db.Column(db.String(200), nullable=True) # e.g. "RedisSearch, RedisJSON"
+    jira_ticket_ids = db.Column(db.String(500), nullable=True)     # e.g. "RED-186318, RED-186400"
+    subscription_id = db.Column(db.String(200), nullable=True)     # e.g. "PRO-gcp-us-central1-MGGZQLW9"
+    bdb_id = db.Column(db.String(100), nullable=True)              # e.g. "13623307"
+    endpoint = db.Column(db.String(500), nullable=True)            # Redis endpoint URL
+    customer_impact = db.Column(db.String(100), nullable=True)     # e.g. "Critical", "Major"
+    issue_type = db.Column(db.String(100), nullable=True)          # Zendesk issue type dropdown
+    problem_summary_zd = db.Column(db.Text, nullable=True)         # Zendesk's own problem summary
+    resolution_summary_zd = db.Column(db.Text, nullable=True)      # Zendesk's own resolution summary
+    related_ticket_ids = db.Column(db.String(500), nullable=True)    # Comma-separated zendesk_ids from conversation cross-refs
+
     # Enrichment tracking
     enrichment_level = db.Column(db.String(20), default='metadata_only')
 
@@ -91,6 +104,17 @@ class Ticket(db.Model):
             'is_production_outage': self.is_production_outage,
             'is_escalation': self.is_escalation,
             'involved_custom_scripts': self.involved_custom_scripts,
+            'product_line': self.product_line,
+            'additional_products': self.additional_products,
+            'jira_ticket_ids': self.jira_ticket_ids,
+            'subscription_id': self.subscription_id,
+            'bdb_id': self.bdb_id,
+            'endpoint': self.endpoint,
+            'customer_impact': self.customer_impact,
+            'issue_type': self.issue_type,
+            'problem_summary_zd': self.problem_summary_zd,
+            'resolution_summary_zd': self.resolution_summary_zd,
+            'related_ticket_ids': self.related_ticket_ids,
             'enrichment_level': self.enrichment_level,
             'auto_score': self.auto_score,
             'content_score': self.content_score,

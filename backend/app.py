@@ -100,9 +100,28 @@ def register_routes(app):
                 content_scorer = scoring.ContentScorer()
                 _, content_comp = content_scorer.score(ticket)
             score_breakdown = {'auto': auto_comp, 'content': content_comp}
+
+        # Parse related ticket IDs and check which exist in DB
+        related_tickets = []
+        if ticket.related_ticket_ids:
+            import json
+            try:
+                refs = json.loads(ticket.related_ticket_ids)
+                for ref in refs:
+                    ref_ticket = Ticket.query.filter_by(zendesk_id=ref['id']).first()
+                    related_tickets.append({
+                        'id': ref['id'],
+                        'context': ref.get('context', ''),
+                        'exists': ref_ticket is not None,
+                        'subject': ref_ticket.subject if ref_ticket else None,
+                    })
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         return render_template('ticket_detail.html', ticket=ticket,
                                notes=notes, conversation=conversation,
-                               tags=tags, score_breakdown=score_breakdown)
+                               tags=tags, score_breakdown=score_breakdown,
+                               related_tickets=related_tickets)
 
     @app.route('/import')
     def import_page():
@@ -117,6 +136,11 @@ def register_routes(app):
         starred = Ticket.query.filter_by(is_starred=True).order_by(Ticket.final_score.desc()).all()
         top = stats.get_top_tickets(limit=30, min_score=20)
         return render_template('interview_prep.html', starred=starred, top=top)
+
+    @app.route('/manage')
+    def manage_page():
+        overview = stats.get_overview()
+        return render_template('manage.html', overview=overview)
 
     # ── API: Tickets ─────────────────────────────────────────────
 
@@ -194,7 +218,11 @@ def register_routes(app):
                      'steps_taken', 'resolution', 'category', 'product_area',
                      'priority', 'severity',
                      'is_production_outage', 'is_escalation', 'involved_custom_scripts',
-                     'interview_notes', 'skills_demonstrated']
+                     'interview_notes', 'skills_demonstrated',
+                     'product_line', 'additional_products', 'jira_ticket_ids',
+                     'subscription_id', 'bdb_id', 'endpoint',
+                     'customer_impact', 'issue_type',
+                     'problem_summary_zd', 'resolution_summary_zd']
 
         for field in updatable:
             if field in data:
@@ -485,6 +513,58 @@ def register_routes(app):
         """Rebuild the full-text search index."""
         rebuild_fts()
         return jsonify({'status': 'ok'})
+
+    @app.route('/api/tickets/<zendesk_id>/reset-enrichment', methods=['POST'])
+    def api_reset_enrichment(zendesk_id):
+        """Reset a single ticket's enrichment back to metadata_only."""
+        from backend.services.enrichment import reset_ticket_enrichment
+        ticket = Ticket.query.filter_by(zendesk_id=zendesk_id).first_or_404()
+        deleted = reset_ticket_enrichment(ticket)
+        db.session.commit()
+        return jsonify({
+            'zendesk_id': zendesk_id,
+            'deleted_notes': deleted,
+            'new_score': ticket.final_score,
+        })
+
+    @app.route('/api/bulk/reset-enrichment', methods=['POST'])
+    def api_bulk_reset_enrichment():
+        """Reset ALL enriched tickets to metadata_only. Requires confirmation token."""
+        from backend.services.enrichment import reset_ticket_enrichment
+        data = request.get_json() or {}
+        if data.get('confirm') != 'RESET_ALL_ENRICHMENT':
+            return jsonify({'error': 'Confirmation required'}), 400
+        tickets = Ticket.query.filter(Ticket.enrichment_level != 'metadata_only').all()
+        count = 0
+        total_notes = 0
+        for ticket in tickets:
+            deleted = reset_ticket_enrichment(ticket)
+            total_notes += deleted
+            count += 1
+        db.session.commit()
+        rebuild_fts()
+        return jsonify({'reset': count, 'deleted_notes': total_notes})
+
+    @app.route('/api/db/clear-all', methods=['POST'])
+    def api_clear_all():
+        """Delete ALL tickets, tags, notes, and scores. Auto-backup first."""
+        data = request.get_json() or {}
+        if data.get('confirm') != 'DELETE_ALL_DATA':
+            return jsonify({'error': 'Confirmation required'}), 400
+        import shutil
+        from backend.config import DATA_DIR
+        db_path = os.path.join(DATA_DIR, 'tickets.db')
+        backup_name = f"tickets_pre_clear_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
+        backup_path = os.path.join(DATA_DIR, backup_name)
+        if os.path.exists(db_path):
+            shutil.copy2(db_path, backup_path)
+        ScoreHistory.query.delete()
+        TicketNote.query.delete()
+        TicketTag.query.delete()
+        Ticket.query.delete()
+        db.session.commit()
+        rebuild_fts()
+        return jsonify({'cleared': True, 'backup': backup_name})
 
     # ── API: Enrichment (for MCP / automation) ─────────────────
 
