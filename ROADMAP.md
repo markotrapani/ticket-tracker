@@ -107,6 +107,13 @@ Process tickets in batches of 10.
 - [ ] Undo support for edits
 - [ ] Unit tests for scoring, CSV import, PDF parser
 
+## Phase 7: Data Enrichment & Insights
+
+- [x] Related ticket auto-detection from PDF conversation cross-references
+- [ ] CSAT/survey feedback import (from Zendesk Explore CSV export - not available in print PDFs)
+- [ ] Ticket relationship graph visualization
+- [ ] Auto-detect escalation patterns from cross-ticket references
+
 ## Needs Real Data
 
 These items require actual ticket content to complete:
