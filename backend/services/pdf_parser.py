@@ -93,11 +93,20 @@ def _extract_metadata(page1_text):
     meta = {}
     lines = page1_text.split('\n')
 
-    # Subject: second line typically has "#NNNNNN Subject text"
-    for line in lines[:5]:
+    # Subject: typically "#NNNNNN Subject text", may wrap to next line
+    for i, line in enumerate(lines[:5]):
         match = re.match(r'#\d{5,7}\s+(.+)', line)
         if match:
-            meta['subject'] = match.group(1).strip()
+            subject = match.group(1).strip()
+            # Check if subject wraps to the next line (continuation line
+            # won't start with a known metadata keyword)
+            if i + 1 < len(lines):
+                next_line = lines[i + 1].strip()
+                metadata_starts = ('Submitted', 'Received', 'Requester',
+                                   'CCs', 'Status', '#')
+                if next_line and not next_line.startswith(metadata_starts):
+                    subject = subject + ' ' + next_line
+            meta['subject'] = subject
             break
 
     # Requester: look for "Name <email>" pattern on the Requester line
