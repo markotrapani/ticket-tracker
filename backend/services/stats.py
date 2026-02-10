@@ -132,28 +132,47 @@ CATEGORY_KEYWORDS = {
 
 
 def suggest_category(ticket):
-    """Suggest a category based on ticket content keywords."""
-    text = ' '.join(filter(None, [
+    """Suggest a category based on ticket content keywords.
+
+    Uses weighted scoring: keywords in subject/problem_summary/resolution
+    count 3x more than keywords in the full description, since the description
+    often contains noise (stack traces, config details, etc.).
+    """
+    # Subject is the highest-signal field
+    subject_text = (ticket.subject or '').lower()
+
+    # High-signal fields (root cause, resolution)
+    focused_text = ' '.join(filter(None, [
+        ticket.root_cause, ticket.resolution, ticket.interview_notes
+    ])).lower()
+
+    # Full text including description (may contain noise like stack traces)
+    full_text = ' '.join(filter(None, [
         ticket.subject, ticket.description, ticket.root_cause,
         ticket.resolution, ticket.interview_notes
     ])).lower()
 
-    if not text.strip():
+    if not full_text.strip():
         return {'suggested': None, 'confidence': 0, 'matches': {}}
 
     scores = {}
     matches = {}
     for category, keywords in CATEGORY_KEYWORDS.items():
-        found = [kw for kw in keywords if kw in text]
-        if found:
-            scores[category] = len(found)
-            matches[category] = found
+        found_subject = [kw for kw in keywords if kw in subject_text]
+        found_focused = [kw for kw in keywords if kw in focused_text]
+        found_full = [kw for kw in keywords if kw in full_text]
+        if found_full:
+            # Subject matches: 5 pts, focused (RCA/resolution): 3 pts, description: 1 pt
+            desc_only = len(found_full) - len(set(found_focused) | set(found_subject))
+            score = len(found_subject) * 5 + len(found_focused) * 3 + max(desc_only, 0)
+            scores[category] = score
+            matches[category] = found_full
 
     if not scores:
         return {'suggested': None, 'confidence': 0, 'matches': {}}
 
     best = max(scores, key=scores.get)
-    confidence = min(scores[best] / 3.0, 1.0)  # 3+ matches = full confidence
+    confidence = min(scores[best] / 9.0, 1.0)  # 9+ weighted points = full confidence
     return {
         'suggested': best,
         'confidence': round(confidence, 2),

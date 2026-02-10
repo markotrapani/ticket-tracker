@@ -370,6 +370,12 @@ def register_routes(app):
         elif has_description or has_resolution:
             ticket.enrichment_level = 'partial'
 
+        # Auto-suggest category if not already set
+        if not ticket.category:
+            suggestion = stats.suggest_category(ticket)
+            if suggestion.get('suggested') and suggestion.get('confidence', 0) >= 0.33:
+                ticket.category = suggestion['suggested']
+
         scoring.score_ticket(ticket)
         ticket.updated_at = datetime.utcnow()
         db.session.commit()
@@ -433,6 +439,11 @@ def register_routes(app):
                 elif has_desc or has_res:
                     ticket.enrichment_level = 'partial'
 
+                if not ticket.category:
+                    suggestion = stats.suggest_category(ticket)
+                    if suggestion.get('suggested') and suggestion.get('confidence', 0) >= 0.33:
+                        ticket.category = suggestion['suggested']
+
                 scoring.score_ticket(ticket)
                 ticket.updated_at = datetime.utcnow()
                 results['enriched'] += 1
@@ -490,6 +501,11 @@ def register_routes(app):
         elif has_desc or has_res:
             ticket.enrichment_level = 'partial'
         # Don't set enrichment_level if no real content was added
+
+        if not ticket.category:
+            suggestion = stats.suggest_category(ticket)
+            if suggestion.get('suggested') and suggestion.get('confidence', 0) >= 0.33:
+                ticket.category = suggestion['suggested']
 
         scoring.score_ticket(ticket)
         ticket.updated_at = datetime.utcnow()
@@ -588,6 +604,11 @@ def register_routes(app):
                     ticket.enrichment_level = 'full'
                 elif has_desc or has_res:
                     ticket.enrichment_level = 'partial'
+
+                if not ticket.category:
+                    suggestion = stats.suggest_category(ticket)
+                    if suggestion.get('suggested') and suggestion.get('confidence', 0) >= 0.33:
+                        ticket.category = suggestion['suggested']
 
                 scoring.score_ticket(ticket)
                 ticket.updated_at = datetime.utcnow()
