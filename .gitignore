@@ -9,5 +9,7 @@ venv/
 dist/
 build/
 .DS_Store
-sample_data/
+sample_data/*
+!sample_data/EXAMPLE_*
 *.csv
+!**/EXAMPLE_*.csv
