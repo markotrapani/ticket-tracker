@@ -344,22 +344,39 @@ def register_routes(app):
         if not ticket:
             return jsonify({'error': f'Ticket {ticket_id} not found in database. Import CSV first or create manually.'}), 404
 
-        # Enrich ticket with parsed data
+        # Enrich ticket with parsed data (only overwrite empty fields)
         if parsed.get('subject') and not ticket.subject:
             ticket.subject = parsed['subject']
         if parsed.get('customer_name') and not ticket.customer_name:
             ticket.customer_name = parsed['customer_name']
         if parsed.get('description'):
             ticket.description = parsed['description']
+        if parsed.get('root_cause') and not ticket.root_cause:
+            ticket.root_cause = parsed['root_cause']
+        if parsed.get('resolution') and not ticket.resolution:
+            ticket.resolution = parsed['resolution']
+        if parsed.get('severity') and not ticket.severity:
+            ticket.severity = parsed['severity']
+        if parsed.get('product_line') and not ticket.product_area:
+            ticket.product_area = parsed['product_line']
+        if parsed.get('is_production'):
+            ticket.is_production_outage = True
 
-        ticket.enrichment_level = 'full' if ticket.description else 'partial'
+        # Determine enrichment level based on actual content
+        has_description = bool(ticket.description)
+        has_resolution = bool(ticket.resolution or ticket.root_cause)
+        if has_description and has_resolution:
+            ticket.enrichment_level = 'full'
+        elif has_description or has_resolution:
+            ticket.enrichment_level = 'partial'
+
         scoring.score_ticket(ticket)
         ticket.updated_at = datetime.utcnow()
         db.session.commit()
 
         return jsonify({
             'ticket_id': ticket_id,
-            'parsed': {k: v for k, v in parsed.items() if k != 'full_text'},
+            'parsed': {k: v for k, v in parsed.items() if k not in ('full_text', 'comments')},
             'ticket': ticket.to_dict(),
         })
 
@@ -398,8 +415,24 @@ def register_routes(app):
                     ticket.customer_name = parsed['customer_name']
                 if parsed.get('description'):
                     ticket.description = parsed['description']
+                if parsed.get('root_cause') and not ticket.root_cause:
+                    ticket.root_cause = parsed['root_cause']
+                if parsed.get('resolution') and not ticket.resolution:
+                    ticket.resolution = parsed['resolution']
+                if parsed.get('severity') and not ticket.severity:
+                    ticket.severity = parsed['severity']
+                if parsed.get('product_line') and not ticket.product_area:
+                    ticket.product_area = parsed['product_line']
+                if parsed.get('is_production'):
+                    ticket.is_production_outage = True
 
-                ticket.enrichment_level = 'full' if ticket.description else 'partial'
+                has_desc = bool(ticket.description)
+                has_res = bool(ticket.resolution or ticket.root_cause)
+                if has_desc and has_res:
+                    ticket.enrichment_level = 'full'
+                elif has_desc or has_res:
+                    ticket.enrichment_level = 'partial'
+
                 scoring.score_ticket(ticket)
                 ticket.updated_at = datetime.utcnow()
                 results['enriched'] += 1
@@ -450,7 +483,14 @@ def register_routes(app):
         if data.get('resolution'):
             ticket.resolution = data['resolution']
 
-        ticket.enrichment_level = 'full' if ticket.description and ticket.resolution else 'partial'
+        has_desc = bool(ticket.description)
+        has_res = bool(ticket.resolution or ticket.root_cause)
+        if has_desc and has_res:
+            ticket.enrichment_level = 'full'
+        elif has_desc or has_res:
+            ticket.enrichment_level = 'partial'
+        # Don't set enrichment_level if no real content was added
+
         scoring.score_ticket(ticket)
         ticket.updated_at = datetime.utcnow()
         db.session.commit()
@@ -541,10 +581,12 @@ def register_routes(app):
                         if not existing:
                             db.session.add(TicketTag(ticket_id=ticket.id, tag=tag_name, source='auto'))
 
-                # Update enrichment level
-                if ticket.description and ticket.resolution:
+                # Update enrichment level based on actual content
+                has_desc = bool(ticket.description)
+                has_res = bool(ticket.resolution or ticket.root_cause)
+                if has_desc and has_res:
                     ticket.enrichment_level = 'full'
-                elif ticket.description or ticket.subject:
+                elif has_desc or has_res:
                     ticket.enrichment_level = 'partial'
 
                 scoring.score_ticket(ticket)
