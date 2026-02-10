@@ -827,11 +827,11 @@ def register_routes(app):
             "review and discuss their past support tickets.\n\n"
             "IMPORTANT RULES:\n"
             "- You will receive retrieved ticket data from the engineer's ticket database.\n"
-            "- Your job is to SUMMARIZE and ANALYZE the retrieved tickets, NOT to answer general knowledge questions.\n"
+            "- ANSWER THE USER'S QUESTION DIRECTLY. If they ask about customers, list the customers. "
+            "If they ask about patterns, describe patterns. If they ask for a summary, summarize.\n"
+            "- Do NOT re-summarize tickets unless the user specifically asks for a summary.\n"
             "- Always reference specific tickets by number (e.g. #153987).\n"
-            "- Highlight the most notable tickets: what made them significant, what was the root cause, "
-            "how they were resolved.\n"
-            "- When multiple tickets match, identify patterns and themes across them.\n"
+            "- When multiple tickets match, identify patterns and themes if relevant.\n"
             "- Be concise and technical. Use bullet points for clarity.\n"
             "- Do NOT make up information not present in the ticket data.\n"
             "- Do NOT answer general Redis questions — only discuss the retrieved tickets."
@@ -847,8 +847,18 @@ def register_routes(app):
                 'content': msg.get('content', '')
             })
 
-        # Current turn: context + follow-up question
-        user_content = context + f"\n\nFollow-up question: {question}" if provided_context else context
+        # Current turn: context + question
+        if provided_context:
+            # Follow-up: strip the old TASK instruction from reused context
+            # so it doesn't override the actual follow-up question
+            import re
+            clean_context = re.split(r'\n---\nTASK:', context)[0]
+            user_content = (
+                f"{clean_context}\n\n---\n"
+                f"Based on the ticket data above, answer this question directly: {question}"
+            )
+        else:
+            user_content = context
         ollama_messages.append({
             'role': 'user',
             'content': user_content
