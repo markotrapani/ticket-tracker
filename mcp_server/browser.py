@@ -1,7 +1,8 @@
 """Playwright browser lifecycle manager with persistent session.
 
-Uses a persistent Chromium context so Zendesk login (including SSO/MFA)
-survives across MCP server restarts.
+Uses a persistent Chrome context (via channel='chrome') so Zendesk login
+(including SSO/MFA) survives across MCP server restarts. Anti-detection
+flags reduce bot detection by SSO providers.
 """
 
 import logging
@@ -38,10 +39,53 @@ class BrowserManager:
         self._context = await self._playwright.chromium.launch_persistent_context(
             user_data_dir=self._user_data_dir,
             headless=use_headless,
+            channel='chrome',
             accept_downloads=False,
             viewport={'width': 1280, 'height': 1024},
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--disable-infobars',
+                '--no-first-run',
+                '--no-default-browser-check',
+            ],
+            ignore_default_args=['--enable-automation', '--no-sandbox'],
         )
         self._is_headless = use_headless
+
+        # Stealth: patch JS fingerprinting used by Okta/bot detectors
+        await self._context.add_init_script("""
+            // Hide webdriver flag
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+            // Fake plugins (headless Chrome has none)
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5],
+            });
+
+            // Fake languages
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en'],
+            });
+
+            // Remove automation-related properties from window
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+            delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+            // Pass Chrome runtime check
+            window.chrome = { runtime: {} };
+
+            // Fix permissions query for notifications
+            const originalQuery = window.Notification &&
+                window.Notification.permission;
+            if (originalQuery) {
+                const originalPermissions = navigator.permissions.query;
+                navigator.permissions.query = (parameters) =>
+                    parameters.name === 'notifications'
+                        ? Promise.resolve({ state: Notification.permission })
+                        : originalPermissions(parameters);
+            }
+        """)
 
         # Reuse existing page or create new one
         if self._context.pages:
