@@ -140,7 +140,7 @@ def cmd_list(status, min_score, starred, category, limit, sort):
         click.echo('-' * 80)
         for t in tickets:
             days = f"{t.resolution_days}" if t.resolution_days is not None else "open"
-            subject = (t.subject or '')[:35]
+            subject = (t.subject or '')[:80]
             star = '*' if t.is_starred else ' '
             score = f"{t.final_score:.0f}" if t.final_score else "-"
             click.echo(f"{star}{t.zendesk_id:<7} {score:>5}  {t.status:<8} {str(t.created_date):<12} {days:>5}  {subject}")
@@ -176,7 +176,7 @@ def cmd_search(query, limit):
         click.echo(f"{'ID':<8} {'Score':>5}  {'Status':<8} {'Created':<12} {'Subject'}")
         click.echo('-' * 70)
         for t in results:
-            subject = (t.subject or '')[:35]
+            subject = (t.subject or '')[:80]
             score = f"{t.final_score:.0f}" if t.final_score else "-"
             click.echo(f"{t.zendesk_id:<8} {score:>5}  {t.status:<8} {str(t.created_date):<12} {subject}")
 
@@ -230,7 +230,7 @@ def cmd_top(min_score, limit):
         click.echo('-' * 70)
         for t in tickets:
             days = f"{t.resolution_days}" if t.resolution_days is not None else "open"
-            subject = (t.subject or 'Not enriched')[:35]
+            subject = (t.subject or 'Not enriched')[:80]
             star = '*' if t.is_starred else ' '
             click.echo(f"{star}{t.zendesk_id:<7} {t.final_score:>5.0f}  {days:>5}  {str(t.created_date):<12} {subject}")
 

@@ -79,7 +79,7 @@
                             </td>
                             <td><span class="badge score-badge score-{{ (t.final_score // 20) | int }}">{{ t.final_score | round(0) | int }}</span></td>
                             <td>{{ t.resolution_days if t.resolution_days is not none else 'open' }}</td>
-                            <td>{{ (t.subject or 'Not enriched')[:40] }}</td>
+                            <td class="text-truncate" style="max-width:300px">{{ t.subject or 'Not enriched' }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>

@@ -159,7 +159,7 @@ async function loadTickets() {
             <td>${t.created_date || ''}</td>
             <td>${t.solved_date || ''}</td>
             <td>${t.resolution_days !== null ? t.resolution_days : '<span class="text-muted">open</span>'}</td>
-            <td>${t.subject || '<span class="text-muted">-</span>'}</td>
+            <td class="text-truncate" style="max-width:350px">${t.subject || '<span class="text-muted">-</span>'}</td>
             <td>${t.customer_name || ''}</td>
             <td>${t.category || ''}</td>
             <td>${enrichmentBadge(t.enrichment_level)}</td>

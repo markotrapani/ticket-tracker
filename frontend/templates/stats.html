@@ -186,7 +186,7 @@ async function loadStats() {
                 <td><span class="badge score-badge score-${Math.min(Math.floor((t.final_score||0)/20),4)}">${Math.round(t.final_score||0)}</span></td>
                 <td>${t.resolution_days !== null ? t.resolution_days : 'open'}</td>
                 <td>${t.category || ''}</td>
-                <td>${(t.subject || '').substring(0,40) || '<span class="text-muted">-</span>'}</td>
+                <td class="text-truncate" style="max-width:300px">${t.subject || '<span class="text-muted">-</span>'}</td>
                 <td><small class="text-muted">${t.why}</small></td>
             </tr>
         `).join('');
