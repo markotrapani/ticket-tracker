@@ -3,7 +3,12 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0">Tickets</h4>
-    <span id="ticket-count" class="text-muted"></span>
+    <div>
+        <button class="btn btn-sm btn-outline-success me-2" data-bs-toggle="modal" data-bs-target="#quickAddModal">
+            <i class="bi bi-plus-lg"></i> New Ticket
+        </button>
+        <span id="ticket-count" class="text-muted"></span>
+    </div>
 </div>
 
 <!-- Filters -->

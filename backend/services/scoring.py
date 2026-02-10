@@ -163,6 +163,8 @@ def score_ticket(ticket):
     content_score, content_components = content_scorer.score(ticket)
     if content_score > 0:
         ticket.content_score = content_score
+    else:
+        ticket.content_score = None
 
     ticket.final_score = calculate_final_score(ticket)
 

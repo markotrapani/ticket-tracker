@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Manage - Ticket Tracker{% endblock %}
+{% block content %}
+<h4 class="mb-3"><i class="bi bi-gear"></i> Manage Database</h4>
+
+<div class="row g-3">
+    <!-- Database Stats -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Database Overview</div>
+            <div class="card-body">
+                <ul class="list-unstyled mb-0">
+                    <li><strong>Total Tickets:</strong> {{ overview.total }}</li>
+                    <li><strong>Enriched:</strong> {{ overview.enriched }}</li>
+                    <li><strong>Metadata Only:</strong> {{ overview.total - overview.enriched }}</li>
+                    <li><strong>Starred:</strong> {{ overview.starred }}</li>
+                    <li><strong>Avg Score:</strong> {{ overview.avg_score }}</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Maintenance Operations -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Maintenance</div>
+            <div class="card-body">
+                <button class="btn btn-outline-primary w-100 mb-2" onclick="rescoreAll()">
+                    <i class="bi bi-calculator"></i> Rescore All Tickets
+                </button>
+                <button class="btn btn-outline-info w-100 mb-2" onclick="rebuildFts()">
+                    <i class="bi bi-search"></i> Rebuild Search Index
+                </button>
+                <button class="btn btn-outline-secondary w-100 mb-2" onclick="backupDb()">
+                    <i class="bi bi-download"></i> Backup Database
+                </button>
+                <div id="maintenance-result" class="mt-2 small"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Backups List -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">Backups</div>
+            <div class="card-body">
+                <div id="backups-list"><span class="text-muted">Loading...</span></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Danger Zone -->
+<h5 class="mt-4 mb-3 text-danger"><i class="bi bi-exclamation-triangle"></i> Danger Zone</h5>
+<div class="row g-3">
+    <!-- Reset All Enrichment -->
+    <div class="col-md-6">
+        <div class="card border-warning">
+            <div class="card-header text-warning">Reset All Enrichment</div>
+            <div class="card-body">
+                <p class="small">Resets <strong>all {{ overview.enriched }} enriched tickets</strong> back to
+                metadata_only. Clears descriptions, root causes, resolutions, and conversation notes.
+                Preserves CSV metadata, tags, manual notes, stars, and interview notes.</p>
+                <div class="input-group input-group-sm mb-2">
+                    <span class="input-group-text">Type RESET to confirm</span>
+                    <input type="text" id="reset-confirm" class="form-control" placeholder="RESET">
+                </div>
+                <button class="btn btn-warning w-100" id="btn-reset-all" onclick="resetAllEnrichment()" disabled>
+                    <i class="bi bi-arrow-counterclockwise"></i> Reset All Enrichment
+                </button>
+                <div id="reset-result" class="mt-2 small"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Clear All Data -->
+    <div class="col-md-6">
+        <div class="card border-danger">
+            <div class="card-header text-danger">Clear All Data</div>
+            <div class="card-body">
+                <p class="small text-danger"><strong>WARNING:</strong> This deletes ALL {{ overview.total }} tickets,
+                tags, notes, and scores. A backup is created automatically before clearing.</p>
+                <div class="input-group input-group-sm mb-2">
+                    <span class="input-group-text">Type DELETE to confirm</span>
+                    <input type="text" id="clear-confirm" class="form-control" placeholder="DELETE">
+                </div>
+                <button class="btn btn-danger w-100" id="btn-clear-all" onclick="clearAllData()" disabled>
+                    <i class="bi bi-trash3"></i> Clear All Data
+                </button>
+                <div id="clear-result" class="mt-2 small"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Enable/disable confirmation buttons
+document.getElementById('reset-confirm').addEventListener('input', (e) => {
+    document.getElementById('btn-reset-all').disabled = e.target.value !== 'RESET';
+});
+document.getElementById('clear-confirm').addEventListener('input', (e) => {
+    document.getElementById('btn-clear-all').disabled = e.target.value !== 'DELETE';
+});
+
+async function rescoreAll() {
+    const el = document.getElementById('maintenance-result');
+    el.innerHTML = '<span class="text-muted">Rescoring...</span>';
+    const resp = await fetch('/api/bulk/score', {method: 'POST'});
+    const data = await resp.json();
+    el.innerHTML = `<span class="text-success">Rescored ${data.scored} tickets</span>`;
+}
+
+async function rebuildFts() {
+    const el = document.getElementById('maintenance-result');
+    el.innerHTML = '<span class="text-muted">Rebuilding...</span>';
+    await fetch('/api/bulk/rebuild-fts', {method: 'POST'});
+    el.innerHTML = '<span class="text-success">Search index rebuilt</span>';
+}
+
+async function backupDb() {
+    const el = document.getElementById('maintenance-result');
+    const resp = await fetch('/api/db/backup', {method: 'POST'});
+    const data = await resp.json();
+    el.innerHTML = `<span class="text-success">Backup created: ${data.backup}</span>`;
+    loadBackups();
+}
+
+async function loadBackups() {
+    const el = document.getElementById('backups-list');
+    const resp = await fetch('/api/db/backups');
+    const data = await resp.json();
+    if (data.length === 0) {
+        el.innerHTML = '<span class="text-muted">No backups yet</span>';
+        return;
+    }
+    el.innerHTML = data.map(b =>
+        `<div class="small mb-1"><i class="bi bi-file-earmark"></i> ${b.name} <span class="text-muted">(${b.size_mb} MB)</span></div>`
+    ).join('');
+}
+
+async function resetAllEnrichment() {
+    if (!confirm('Are you sure? This will reset ALL enriched tickets to metadata_only.')) return;
+    const el = document.getElementById('reset-result');
+    el.innerHTML = '<span class="text-muted">Resetting...</span>';
+    const resp = await fetch('/api/bulk/reset-enrichment', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({confirm: 'RESET_ALL_ENRICHMENT'})
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+        el.innerHTML = `<span class="text-success">Reset ${data.reset} tickets. Deleted ${data.deleted_notes} conversation notes.</span>`;
+        document.getElementById('reset-confirm').value = '';
+        document.getElementById('btn-reset-all').disabled = true;
+    } else {
+        el.innerHTML = `<span class="text-danger">${data.error}</span>`;
+    }
+}
+
+async function clearAllData() {
+    if (!confirm('FINAL WARNING: This will delete ALL ticket data. A backup will be created. Continue?')) return;
+    const el = document.getElementById('clear-result');
+    el.innerHTML = '<span class="text-muted">Clearing...</span>';
+    const resp = await fetch('/api/db/clear-all', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({confirm: 'DELETE_ALL_DATA'})
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+        el.innerHTML = `<span class="text-success">All data cleared. Backup: ${data.backup}</span>`;
+        document.getElementById('clear-confirm').value = '';
+        document.getElementById('btn-clear-all').disabled = true;
+    } else {
+        el.innerHTML = `<span class="text-danger">${data.error}</span>`;
+    }
+}
+
+loadBackups();
+</script>
+{% endblock %}
