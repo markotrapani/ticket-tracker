@@ -118,6 +118,8 @@ class TicketNote(db.Model):
     ticket_id = db.Column(db.Integer, db.ForeignKey('tickets.id'), nullable=False)
     content = db.Column(db.Text, nullable=False)
     note_type = db.Column(db.String(20), default='general')
+    author = db.Column(db.String(200))
+    is_internal = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
@@ -126,6 +128,8 @@ class TicketNote(db.Model):
             'ticket_id': self.ticket_id,
             'content': self.content,
             'note_type': self.note_type,
+            'author': self.author,
+            'is_internal': self.is_internal,
             'created_at': self.created_at.isoformat() if self.created_at else None,
         }
 

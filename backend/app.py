@@ -81,7 +81,10 @@ def register_routes(app):
     @app.route('/tickets/<zendesk_id>')
     def ticket_detail(zendesk_id):
         ticket = Ticket.query.filter_by(zendesk_id=zendesk_id).first_or_404()
-        notes = ticket.notes.order_by(TicketNote.created_at.desc()).all()
+        all_notes = ticket.notes.order_by(TicketNote.created_at.asc()).all()
+        conversation = [n for n in all_notes if n.note_type == 'conversation']
+        notes = [n for n in all_notes if n.note_type != 'conversation']
+        notes.reverse()  # User notes: newest first
         tags = ticket.tag_list
         score_breakdown = None
         if ticket.auto_score is not None:
@@ -93,7 +96,8 @@ def register_routes(app):
                 _, content_comp = content_scorer.score(ticket)
             score_breakdown = {'auto': auto_comp, 'content': content_comp}
         return render_template('ticket_detail.html', ticket=ticket,
-                               notes=notes, tags=tags, score_breakdown=score_breakdown)
+                               notes=notes, conversation=conversation,
+                               tags=tags, score_breakdown=score_breakdown)
 
     @app.route('/import')
     def import_page():
@@ -324,6 +328,85 @@ def register_routes(app):
         results = import_csv(filepath, update_existing=update)
         return jsonify(results)
 
+    def _enrich_ticket_from_parsed(ticket, parsed):
+        """Enrich a ticket with data from a parsed PDF.
+
+        Populates metadata fields, stores conversation comments as TicketNotes,
+        builds a comprehensive description, auto-suggests category, and scores.
+        """
+        from dateutil import parser as dateutil_parser
+
+        # Metadata fields (only overwrite empty fields)
+        if parsed.get('subject') and not ticket.subject:
+            ticket.subject = parsed['subject']
+        if parsed.get('customer_name') and not ticket.customer_name:
+            ticket.customer_name = parsed['customer_name']
+        if parsed.get('root_cause') and not ticket.root_cause:
+            ticket.root_cause = parsed['root_cause']
+        if parsed.get('resolution') and not ticket.resolution:
+            ticket.resolution = parsed['resolution']
+        if parsed.get('severity') and not ticket.severity:
+            ticket.severity = parsed['severity']
+        if parsed.get('product_line') and not ticket.product_area:
+            ticket.product_area = parsed['product_line']
+        if parsed.get('is_production'):
+            ticket.is_production_outage = True
+
+        # Store conversation comments as TicketNotes
+        comments = parsed.get('comments', [])
+        if comments:
+            # Clear existing conversation notes to avoid duplicates on re-import
+            TicketNote.query.filter_by(
+                ticket_id=ticket.id, note_type='conversation'
+            ).delete()
+
+            for comment in comments:
+                try:
+                    ts = dateutil_parser.parse(comment['timestamp'])
+                except Exception:
+                    ts = datetime.utcnow()
+
+                db.session.add(TicketNote(
+                    ticket_id=ticket.id,
+                    content=comment['body'],
+                    note_type='conversation',
+                    author=comment.get('author', 'Unknown'),
+                    is_internal=comment.get('is_internal', False),
+                    created_at=ts,
+                ))
+
+        # Build comprehensive description from all non-internal comments
+        bot_authors = {'Redis Support Bot Agent', 'Analyzer Bot'}
+        public_comments = [
+            c for c in comments
+            if not c.get('is_internal')
+            and c.get('author') not in bot_authors
+            and 'This is an automated response' not in c.get('body', '')
+            and c.get('body', '').strip()
+        ]
+        if public_comments:
+            desc_parts = []
+            for c in public_comments:
+                desc_parts.append(f"[{c['author']} - {c['timestamp']}]\n{c['body']}")
+            ticket.description = '\n\n---\n\n'.join(desc_parts)
+
+        # Enrichment level
+        has_desc = bool(ticket.description)
+        has_res = bool(ticket.resolution or ticket.root_cause)
+        if has_desc and has_res:
+            ticket.enrichment_level = 'full'
+        elif has_desc or has_res:
+            ticket.enrichment_level = 'partial'
+
+        # Auto-suggest category
+        if not ticket.category:
+            suggestion = stats.suggest_category(ticket)
+            if suggestion.get('suggested') and suggestion.get('confidence', 0) >= 0.33:
+                ticket.category = suggestion['suggested']
+
+        scoring.score_ticket(ticket)
+        ticket.updated_at = datetime.utcnow()
+
     @app.route('/api/import/pdf', methods=['POST'])
     def api_import_pdf():
         if 'file' not in request.files:
@@ -344,46 +427,14 @@ def register_routes(app):
         if not ticket:
             return jsonify({'error': f'Ticket {ticket_id} not found in database. Import CSV first or create manually.'}), 404
 
-        # Enrich ticket with parsed data (only overwrite empty fields)
-        if parsed.get('subject') and not ticket.subject:
-            ticket.subject = parsed['subject']
-        if parsed.get('customer_name') and not ticket.customer_name:
-            ticket.customer_name = parsed['customer_name']
-        if parsed.get('description'):
-            ticket.description = parsed['description']
-        if parsed.get('root_cause') and not ticket.root_cause:
-            ticket.root_cause = parsed['root_cause']
-        if parsed.get('resolution') and not ticket.resolution:
-            ticket.resolution = parsed['resolution']
-        if parsed.get('severity') and not ticket.severity:
-            ticket.severity = parsed['severity']
-        if parsed.get('product_line') and not ticket.product_area:
-            ticket.product_area = parsed['product_line']
-        if parsed.get('is_production'):
-            ticket.is_production_outage = True
-
-        # Determine enrichment level based on actual content
-        has_description = bool(ticket.description)
-        has_resolution = bool(ticket.resolution or ticket.root_cause)
-        if has_description and has_resolution:
-            ticket.enrichment_level = 'full'
-        elif has_description or has_resolution:
-            ticket.enrichment_level = 'partial'
-
-        # Auto-suggest category if not already set
-        if not ticket.category:
-            suggestion = stats.suggest_category(ticket)
-            if suggestion.get('suggested') and suggestion.get('confidence', 0) >= 0.33:
-                ticket.category = suggestion['suggested']
-
-        scoring.score_ticket(ticket)
-        ticket.updated_at = datetime.utcnow()
+        _enrich_ticket_from_parsed(ticket, parsed)
         db.session.commit()
 
         return jsonify({
             'ticket_id': ticket_id,
             'parsed': {k: v for k, v in parsed.items() if k not in ('full_text', 'comments')},
             'ticket': ticket.to_dict(),
+            'comments_stored': len(parsed.get('comments', [])),
         })
 
     @app.route('/api/import/pdf/batch', methods=['POST'])
@@ -415,37 +466,7 @@ def register_routes(app):
                     results['not_found'].append(ticket_id)
                     continue
 
-                if parsed.get('subject') and not ticket.subject:
-                    ticket.subject = parsed['subject']
-                if parsed.get('customer_name') and not ticket.customer_name:
-                    ticket.customer_name = parsed['customer_name']
-                if parsed.get('description'):
-                    ticket.description = parsed['description']
-                if parsed.get('root_cause') and not ticket.root_cause:
-                    ticket.root_cause = parsed['root_cause']
-                if parsed.get('resolution') and not ticket.resolution:
-                    ticket.resolution = parsed['resolution']
-                if parsed.get('severity') and not ticket.severity:
-                    ticket.severity = parsed['severity']
-                if parsed.get('product_line') and not ticket.product_area:
-                    ticket.product_area = parsed['product_line']
-                if parsed.get('is_production'):
-                    ticket.is_production_outage = True
-
-                has_desc = bool(ticket.description)
-                has_res = bool(ticket.resolution or ticket.root_cause)
-                if has_desc and has_res:
-                    ticket.enrichment_level = 'full'
-                elif has_desc or has_res:
-                    ticket.enrichment_level = 'partial'
-
-                if not ticket.category:
-                    suggestion = stats.suggest_category(ticket)
-                    if suggestion.get('suggested') and suggestion.get('confidence', 0) >= 0.33:
-                        ticket.category = suggestion['suggested']
-
-                scoring.score_ticket(ticket)
-                ticket.updated_at = datetime.utcnow()
+                _enrich_ticket_from_parsed(ticket, parsed)
                 results['enriched'] += 1
 
             except Exception as e:
