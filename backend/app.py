@@ -142,6 +142,10 @@ def register_routes(app):
         overview = stats.get_overview()
         return render_template('manage.html', overview=overview)
 
+    @app.route('/chat')
+    def chat_page():
+        return render_template('chat.html')
+
     # ── API: Tickets ─────────────────────────────────────────────
 
     @app.route('/api/tickets')
@@ -783,6 +787,76 @@ def register_routes(app):
             'tickets': [t.to_dict() for t in results],
             'total': len(results),
         })
+
+    # ── API: Chat ───────────────────────────────────────────────
+
+    @app.route('/api/chat/retrieve', methods=['POST'])
+    def api_chat_retrieve():
+        """Smart retrieval: parse question, search DB, return formatted context."""
+        data = request.get_json()
+        question = (data or {}).get('question', '').strip()
+        if not question:
+            return jsonify({'error': 'Question required'}), 400
+
+        from backend.services.retrieval import query_tickets
+        result = query_tickets(question)
+        return jsonify(result)
+
+    @app.route('/api/chat/ollama', methods=['POST'])
+    def api_chat_ollama():
+        """Send question + retrieved context to Ollama, stream response via SSE."""
+        import requests as http_requests
+        data = request.get_json()
+        question = (data or {}).get('question', '').strip()
+        model = (data or {}).get('model', 'mistral-nemo')
+        if not question:
+            return jsonify({'error': 'Question required'}), 400
+
+        from backend.services.retrieval import query_tickets
+        result = query_tickets(question)
+
+        system_prompt = (
+            "You are a support ticket analysis assistant for a Redis Cloud L3 support engineer. "
+            "Answer questions based on the retrieved ticket data provided. "
+            "When referencing tickets, include the ticket number as #XXXXXX. "
+            "Be concise and technical. Summarize patterns when multiple tickets match."
+        )
+
+        def generate():
+            try:
+                resp = http_requests.post('http://localhost:11434/api/generate', json={
+                    'model': model,
+                    'prompt': result['formatted_context'],
+                    'system': system_prompt,
+                    'stream': True,
+                }, stream=True, timeout=120)
+                for line in resp.iter_lines():
+                    if line:
+                        yield f"data: {line.decode()}\n\n"
+            except Exception as e:
+                import json
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+        from flask import Response
+        return Response(generate(), mimetype='text/event-stream',
+                        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+    @app.route('/api/chat/ollama/health')
+    def api_ollama_health():
+        """Check if Ollama is running and list available models."""
+        try:
+            import requests as http_requests
+            resp = http_requests.get('http://localhost:11434/api/tags', timeout=2)
+            if resp.ok:
+                models = resp.json().get('models', [])
+                return jsonify({
+                    'available': True,
+                    'models': [m['name'] for m in models],
+                })
+        except Exception:
+            pass
+        return jsonify({'available': False, 'models': []})
 
     # ── API: Export ──────────────────────────────────────────────
 

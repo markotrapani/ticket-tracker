@@ -1,0 +1,355 @@
+{% extends "base.html" %}
+{% block title %}Chat - Ticket Tracker{% endblock %}
+
+{% block content %}
+<div class="row g-0" style="height: calc(100vh - 80px);">
+    <!-- Chat area -->
+    <div class="col-12 d-flex flex-column h-100">
+        <!-- Header bar -->
+        <div class="d-flex align-items-center gap-2 px-3 py-2 border-bottom border-secondary">
+            <h5 class="mb-0"><i class="bi bi-chat-dots"></i> Ticket Chat</h5>
+            <div class="ms-auto d-flex align-items-center gap-2">
+                <div class="btn-group btn-group-sm" role="group">
+                    <input type="radio" class="btn-check" name="chatMode" id="modeOllama" value="ollama" checked>
+                    <label class="btn btn-outline-success" for="modeOllama" id="ollamaLabel">
+                        <i class="bi bi-robot"></i> Ollama
+                    </label>
+                    <input type="radio" class="btn-check" name="chatMode" id="modeContext" value="context">
+                    <label class="btn btn-outline-primary" for="modeContext">
+                        <i class="bi bi-search"></i> Retrieve Only
+                    </label>
+                </div>
+                <select class="form-select form-select-sm" id="modelSelect" style="width:auto;">
+                    <option value="mistral-nemo">mistral-nemo</option>
+                </select>
+                <button class="btn btn-sm btn-outline-secondary" onclick="clearChat()" title="Clear chat">
+                    <i class="bi bi-trash3"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Messages area -->
+        <div class="chat-messages flex-grow-1" id="chatMessages">
+            <div class="text-center text-muted py-5" id="emptyState">
+                <i class="bi bi-chat-dots" style="font-size: 3rem; opacity: 0.3;"></i>
+                <p class="mt-3">Ask questions about your 898 support tickets.</p>
+                <div class="d-flex flex-wrap justify-content-center gap-2 mt-3">
+                    <button class="btn btn-sm btn-outline-secondary suggestion-btn" onclick="askSuggestion(this)">What are the most significant CRDB tickets?</button>
+                    <button class="btn btn-sm btn-outline-secondary suggestion-btn" onclick="askSuggestion(this)">Find tickets where we created a custom script</button>
+                    <button class="btn btn-sm btn-outline-secondary suggestion-btn" onclick="askSuggestion(this)">Show me P1 production outages</button>
+                    <button class="btn btn-sm btn-outline-secondary suggestion-btn" onclick="askSuggestion(this)">Top scored TLS certificate issues</button>
+                    <button class="btn btn-sm btn-outline-secondary suggestion-btn" onclick="askSuggestion(this)">What cluster failover problems did we resolve?</button>
+                    <button class="btn btn-sm btn-outline-secondary suggestion-btn" onclick="askSuggestion(this)">Find data loss incidents</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input area -->
+        <div class="chat-input-area">
+            <form onsubmit="sendMessage(); return false;" class="d-flex gap-2">
+                <input type="text" class="form-control" id="chatInput"
+                       placeholder="Ask about your tickets..." autocomplete="off">
+                <button type="submit" class="btn btn-primary" id="sendBtn">
+                    <i class="bi bi-send"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// State
+let chatMode = 'ollama';
+let ollamaAvailable = false;
+let messages = [];
+
+// Init
+document.addEventListener('DOMContentLoaded', () => {
+    checkOllama();
+    document.querySelectorAll('input[name="chatMode"]').forEach(r => {
+        r.addEventListener('change', () => {
+            chatMode = r.value;
+            document.getElementById('modelSelect').style.display =
+                chatMode === 'ollama' ? 'block' : 'none';
+        });
+    });
+    document.getElementById('chatInput').focus();
+});
+
+async function checkOllama() {
+    try {
+        const resp = await fetch('/api/chat/ollama/health');
+        const data = await resp.json();
+        if (data.available && data.models.length > 0) {
+            ollamaAvailable = true;
+            const sel = document.getElementById('modelSelect');
+            sel.innerHTML = data.models.map(m =>
+                `<option value="${m}" ${m.includes('nemo') ? 'selected' : ''}>${m}</option>`
+            ).join('');
+            document.getElementById('ollamaLabel').classList.remove('disabled');
+        } else {
+            ollamaAvailable = false;
+            document.getElementById('modeOllama').disabled = true;
+            document.getElementById('ollamaLabel').classList.add('opacity-50');
+            document.getElementById('ollamaLabel').title = 'Ollama not running. Install from ollama.com';
+            // Fall back to Retrieve Only mode
+            document.getElementById('modeContext').checked = true;
+            chatMode = 'context';
+            document.getElementById('modelSelect').style.display = 'none';
+        }
+    } catch(e) {
+        document.getElementById('modeOllama').disabled = true;
+        document.getElementById('ollamaLabel').classList.add('opacity-50');
+        // Fall back to Retrieve Only mode
+        document.getElementById('modeContext').checked = true;
+        chatMode = 'context';
+        document.getElementById('modelSelect').style.display = 'none';
+    }
+}
+
+function askSuggestion(btn) {
+    document.getElementById('chatInput').value = btn.textContent.trim();
+    sendMessage();
+}
+
+function clearChat() {
+    messages = [];
+    const el = document.getElementById('chatMessages');
+    el.innerHTML = '';
+    document.getElementById('emptyState')?.remove();
+    // Re-add empty state
+    el.innerHTML = `
+        <div class="text-center text-muted py-5" id="emptyState">
+            <i class="bi bi-chat-dots" style="font-size: 3rem; opacity: 0.3;"></i>
+            <p class="mt-3">Ask questions about your 898 support tickets.</p>
+        </div>`;
+}
+
+function addUserBubble(text) {
+    document.getElementById('emptyState')?.remove();
+    const el = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = 'd-flex justify-content-end mb-3';
+    div.innerHTML = `<div class="chat-bubble chat-bubble-user">${escapeHtml(text)}</div>`;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+}
+
+function addContextBubble(data) {
+    const el = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = 'd-flex justify-content-start mb-3';
+
+    const parsed = data.parsed_query;
+    let filterBadges = '';
+    if (parsed.filters.category) filterBadges += `<span class="badge bg-info me-1">${parsed.filters.category}</span>`;
+    if (parsed.filters.severity) filterBadges += `<span class="badge bg-danger me-1">${parsed.filters.severity}</span>`;
+    if (parsed.filters.is_production_outage) filterBadges += `<span class="badge bg-warning text-dark me-1">Outage</span>`;
+    if (parsed.filters.is_escalation) filterBadges += `<span class="badge bg-warning text-dark me-1">Escalation</span>`;
+    if (parsed.filters.involved_custom_scripts) filterBadges += `<span class="badge bg-success me-1">Custom Scripts</span>`;
+    if (parsed.filters.year) filterBadges += `<span class="badge bg-secondary me-1">${parsed.filters.year}</span>`;
+    if (parsed.keywords.length) filterBadges += `<span class="badge bg-secondary me-1">Keywords: ${parsed.keywords.join(', ')}</span>`;
+
+    let ticketCards = '';
+    if (data.tickets.length === 0) {
+        ticketCards = '<p class="text-muted small mb-0">No tickets matched your query. Try broader terms.</p>';
+    } else {
+        for (const t of data.tickets) {
+            const scoreClass = Math.min(Math.floor((t.final_score || 0) / 20), 4);
+            const flags = [];
+            if (t.is_production_outage) flags.push('<span class="badge bg-warning text-dark" style="font-size:0.65rem">Outage</span>');
+            if (t.is_escalation) flags.push('<span class="badge bg-danger" style="font-size:0.65rem">Escalation</span>');
+            ticketCards += `
+                <a href="/tickets/${t.zendesk_id}" target="_blank" class="text-decoration-none">
+                    <div class="chat-ticket-card">
+                        <div class="d-flex align-items-center gap-2">
+                            <strong class="text-primary">#${t.zendesk_id}</strong>
+                            <span class="badge score-badge score-${scoreClass}" style="font-size:0.7rem">${Math.round(t.final_score || 0)}</span>
+                            ${t.category ? `<span class="text-muted small">${t.category}</span>` : ''}
+                            ${flags.join(' ')}
+                        </div>
+                        <div class="small text-light mt-1">${escapeHtml(t.subject || 'No subject')}</div>
+                        ${t.summary ? `<div class="small text-muted mt-1" style="font-size:0.75rem">${escapeHtml(truncate(t.summary, 200))}</div>` : ''}
+                    </div>
+                </a>`;
+        }
+    }
+
+    div.innerHTML = `
+        <div class="chat-bubble chat-bubble-context" style="width:100%; max-width:90%;">
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <i class="bi bi-database text-info"></i>
+                <strong>Found ${data.ticket_count} ticket${data.ticket_count !== 1 ? 's' : ''}</strong>
+                ${filterBadges}
+            </div>
+            <div class="chat-tickets-list">${ticketCards}</div>
+            <details class="mt-2">
+                <summary class="small text-muted cursor-pointer">Show raw context for LLM</summary>
+                <pre class="small mt-1 p-2 rounded" style="background:rgba(0,0,0,0.3); max-height:300px; overflow:auto; white-space:pre-wrap; font-size:0.7rem;">${escapeHtml(data.formatted_context)}</pre>
+            </details>
+        </div>`;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+}
+
+function addAssistantBubble() {
+    const el = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = 'd-flex justify-content-start mb-3';
+    div.innerHTML = `
+        <div class="chat-bubble chat-bubble-assistant" id="streamingBubble">
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi bi-robot text-success"></i>
+                <strong class="small">Ollama</strong>
+            </div>
+            <div id="streamingContent"><span class="spinner"></span></div>
+        </div>`;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+    return document.getElementById('streamingContent');
+}
+
+function addLoadingIndicator() {
+    const el = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = 'd-flex justify-content-start mb-3';
+    div.id = 'loadingIndicator';
+    div.innerHTML = `
+        <div class="chat-bubble chat-bubble-context">
+            <span class="spinner"></span> Searching tickets...
+        </div>`;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+}
+
+function removeLoadingIndicator() {
+    document.getElementById('loadingIndicator')?.remove();
+}
+
+async function sendMessage() {
+    const input = document.getElementById('chatInput');
+    const question = input.value.trim();
+    if (!question) return;
+
+    input.value = '';
+    addUserBubble(question);
+    addLoadingIndicator();
+
+    try {
+        // Step 1: Always retrieve tickets first
+        const retrieveResp = await fetch('/api/chat/retrieve', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({question})
+        });
+        removeLoadingIndicator();
+        const data = await retrieveResp.json();
+        addContextBubble(data);
+        messages.push({role: 'user', content: question});
+
+        // Step 2: Generate a summary response
+        if (chatMode === 'ollama' && ollamaAvailable && data.ticket_count > 0) {
+            // Stream response from Ollama
+            const model = document.getElementById('modelSelect').value;
+            const contentEl = addAssistantBubble();
+            contentEl.textContent = '';
+
+            const resp = await fetch('/api/chat/ollama', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({question, model})
+            });
+
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let fullText = '';
+
+            while (true) {
+                const {done, value} = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+
+                for (const line of lines) {
+                    const jsonStr = line.slice(6);
+                    if (jsonStr === '[DONE]') break;
+                    try {
+                        const obj = JSON.parse(jsonStr);
+                        if (obj.error) {
+                            contentEl.innerHTML = `<span class="text-danger">${escapeHtml(obj.error)}</span>`;
+                            break;
+                        }
+                        if (obj.response) {
+                            fullText += obj.response;
+                            contentEl.textContent = fullText;
+                            document.getElementById('chatMessages').scrollTop =
+                                document.getElementById('chatMessages').scrollHeight;
+                        }
+                    } catch(e) {}
+                }
+            }
+            messages.push({role: 'assistant', content: fullText});
+        } else if (data.ticket_count > 0) {
+            // No Ollama — show a basic heuristic summary
+            addHeuristicSummary(data);
+        }
+    } catch(e) {
+        removeLoadingIndicator();
+        const el = document.getElementById('chatMessages');
+        const div = document.createElement('div');
+        div.className = 'd-flex justify-content-start mb-3';
+        div.innerHTML = `<div class="chat-bubble chat-bubble-context text-danger">Error: ${escapeHtml(e.message)}</div>`;
+        el.appendChild(div);
+    }
+
+    input.focus();
+}
+
+function addHeuristicSummary(data) {
+    // Basic summary when Ollama isn't available
+    const el = document.getElementById('chatMessages');
+    const div = document.createElement('div');
+    div.className = 'd-flex justify-content-start mb-3';
+
+    const tickets = data.tickets;
+    let summary = `Found ${tickets.length} matching ticket${tickets.length !== 1 ? 's' : ''}. `;
+    if (tickets.length > 0) {
+        const topScore = Math.round(tickets[0].final_score || 0);
+        summary += `The highest scored is #${tickets[0].zendesk_id} (score: ${topScore}). `;
+        const categories = [...new Set(tickets.map(t => t.category).filter(Boolean))];
+        if (categories.length > 0) {
+            summary += `Categories: ${categories.join(', ')}. `;
+        }
+        const outages = tickets.filter(t => t.is_production_outage).length;
+        if (outages > 0) {
+            summary += `${outages} involved production outages. `;
+        }
+    }
+    summary += '\n\nFor a detailed AI-generated analysis, enable Ollama mode or install Ollama (ollama.com).';
+
+    div.innerHTML = `
+        <div class="chat-bubble chat-bubble-assistant" style="max-width:90%;">
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi bi-lightbulb text-warning"></i>
+                <strong class="small">Summary</strong>
+            </div>
+            <div class="small" style="white-space:pre-wrap">${escapeHtml(summary)}</div>
+        </div>`;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+}
+
+function truncate(text, maxLen) {
+    if (!text || text.length <= maxLen) return text;
+    return text.substring(0, maxLen) + '...';
+}
+</script>
+{% endblock %}

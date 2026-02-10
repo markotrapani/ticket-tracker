@@ -956,6 +956,43 @@ async def reset_ticket_enrichment(ticket_id: str) -> str:
         )
 
 
+# ── Chat / Retrieval ─────────────────────────────────────────────
+
+
+@mcp.tool()
+async def query_tickets(question: str) -> str:
+    """Search tickets using natural language and return formatted results for analysis.
+
+    Parses the question to extract keywords and filters, searches the FTS5 index
+    and structured fields, and returns the top matching tickets with their STAR
+    analysis data.
+
+    Examples:
+        "What CRDB tickets involved data loss?"
+        "Show me P1 production outages"
+        "Top scored tickets about TLS certificate issues"
+        "Find tickets where we created a custom script"
+        "Most significant cluster failover problems"
+
+    Args:
+        question: Natural language question about support tickets
+    """
+    from backend.services.retrieval import query_tickets as _query
+
+    with flask_app.app_context():
+        result = _query(question)
+
+    parsed = result['parsed_query']
+    lines = [
+        f"Query: {question}",
+        f"Parsed: keywords={parsed['keywords']}, filters={parsed['filters']}",
+        f"Found: {result['ticket_count']} matching tickets",
+        "",
+        result['formatted_context'],
+    ]
+    return '\n'.join(lines)
+
+
 # ═══════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════
