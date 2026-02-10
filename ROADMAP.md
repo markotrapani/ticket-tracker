@@ -58,10 +58,43 @@
 - [x] JSON export API
 - [x] Markdown export API
 - [x] CLI export command
+- [x] Bulk enrichment API (`/api/enrich/bulk`) for external automation
+- [x] Unenriched tickets endpoint (`/api/tickets/unenriched`) for batch workflows
+- [x] CLI `next-unenriched` command for sequential enrichment
 - [ ] CSV export
 - [ ] Print-friendly interview prep view
-- [ ] Bulk enrichment via Claude native app + MCP browser integration
+- [ ] Bulk enrichment via Claude native app + MCP browser integration (see below)
 - [ ] ZenDesk API integration (if API access becomes available)
+
+### MCP Browser Integration (Planned)
+
+The highest-impact enrichment path is using the Claude native app with an MCP browser
+server (Puppeteer/Playwright) to scrape ticket content from an authenticated ZenDesk session.
+
+**How it works:**
+
+1. User opens Claude native app with Browser MCP server configured
+2. Claude navigates to `https://redislabs.zendesk.com/agent/tickets/{id}` using the user's session
+3. Claude extracts: subject, description, comments, tags, priority, customer name
+4. Claude POSTs the extracted data to this app's `/api/enrich/bulk` endpoint
+5. The app auto-scores the enriched ticket and updates enrichment_level
+
+**Integration surface (already built):**
+
+- `GET /api/tickets/unenriched` - returns ticket IDs that still need content (metadata_only)
+- `POST /api/enrich/bulk` - accepts array of `{zendesk_id, subject, description, ...}` objects
+- Both endpoints are designed for automation: no auth required (local-only app)
+
+**Prompt template for Claude native app:**
+
+```text
+I have a ticket tracker running at http://localhost:5050.
+First, GET http://localhost:5050/api/tickets/unenriched to get the list of tickets needing enrichment.
+For each ticket, navigate to https://redislabs.zendesk.com/agent/tickets/{zendesk_id} in my browser.
+Extract the subject, full description/conversation, any resolution notes, customer name, and tags.
+Then POST the data to http://localhost:5050/api/enrich/bulk with the extracted content.
+Process tickets in batches of 10.
+```
 
 ## Phase 6: Polish
 

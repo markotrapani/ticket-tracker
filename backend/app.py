@@ -373,6 +373,88 @@ def register_routes(app):
         db.session.commit()
         return jsonify({'scored': count})
 
+    # ── API: Enrichment (for MCP / automation) ─────────────────
+
+    @app.route('/api/tickets/unenriched')
+    def api_unenriched():
+        """Return tickets that still need content enrichment.
+        Designed for automation: Claude native app fetches this list,
+        scrapes ZenDesk via MCP browser, then POSTs back to /api/enrich/bulk.
+        """
+        limit = request.args.get('limit', 50, type=int)
+        limit = min(limit, 500)
+        tickets = Ticket.query.filter_by(enrichment_level='metadata_only').order_by(
+            Ticket.final_score.desc().nullslast()
+        ).limit(limit).all()
+        return jsonify({
+            'tickets': [{'zendesk_id': t.zendesk_id, 'zendesk_url': t.zendesk_url,
+                         'status': t.status, 'created_date': t.created_date.isoformat(),
+                         'auto_score': t.auto_score} for t in tickets],
+            'total_unenriched': Ticket.query.filter_by(enrichment_level='metadata_only').count(),
+        })
+
+    @app.route('/api/enrich/bulk', methods=['POST'])
+    def api_enrich_bulk():
+        """Bulk enrich tickets with scraped content.
+        Accepts JSON array of objects, each with at minimum:
+          { "zendesk_id": "12345", "subject": "...", "description": "..." }
+        Optional fields: customer_name, root_cause, resolution, category,
+                         product_area, severity, tags (array of strings)
+        """
+        data = request.get_json()
+        if not isinstance(data, list):
+            data = [data]
+
+        results = {'enriched': 0, 'not_found': [], 'errors': []}
+
+        for item in data:
+            zendesk_id = item.get('zendesk_id')
+            if not zendesk_id:
+                results['errors'].append('Missing zendesk_id in item')
+                continue
+
+            ticket = Ticket.query.filter_by(zendesk_id=str(zendesk_id)).first()
+            if not ticket:
+                results['not_found'].append(zendesk_id)
+                continue
+
+            try:
+                enrichable = ['subject', 'customer_name', 'description', 'root_cause',
+                              'resolution', 'category', 'product_area', 'severity']
+                for field in enrichable:
+                    if item.get(field):
+                        setattr(ticket, field, item[field])
+
+                # Boolean flags
+                if item.get('is_production_outage') is not None:
+                    ticket.is_production_outage = bool(item['is_production_outage'])
+                if item.get('is_escalation') is not None:
+                    ticket.is_escalation = bool(item['is_escalation'])
+
+                # Tags
+                if item.get('tags'):
+                    for tag_name in item['tags']:
+                        tag_name = tag_name.strip().lower()
+                        existing = TicketTag.query.filter_by(ticket_id=ticket.id, tag=tag_name).first()
+                        if not existing:
+                            db.session.add(TicketTag(ticket_id=ticket.id, tag=tag_name, source='auto'))
+
+                # Update enrichment level
+                if ticket.description and ticket.resolution:
+                    ticket.enrichment_level = 'full'
+                elif ticket.description or ticket.subject:
+                    ticket.enrichment_level = 'partial'
+
+                scoring.score_ticket(ticket)
+                ticket.updated_at = datetime.utcnow()
+                results['enriched'] += 1
+
+            except Exception as e:
+                results['errors'].append(f'{zendesk_id}: {str(e)}')
+
+        db.session.commit()
+        return jsonify(results)
+
     # ── API: Statistics ──────────────────────────────────────────
 
     @app.route('/api/stats/overview')

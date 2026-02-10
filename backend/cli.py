@@ -318,6 +318,29 @@ def cmd_export(fmt, starred, min_score, output):
             click.echo(content)
 
 
+@cli.command('next-unenriched')
+@click.option('--limit', '-n', default=10)
+def cmd_next_unenriched(limit):
+    """Show next unenriched tickets (highest auto-score first)."""
+    with app.app_context():
+        total = Ticket.query.filter_by(enrichment_level='metadata_only').count()
+        tickets = Ticket.query.filter_by(enrichment_level='metadata_only').order_by(
+            Ticket.final_score.desc().nullslast()
+        ).limit(limit).all()
+
+        if not tickets:
+            click.echo("All tickets are enriched!")
+            return
+
+        click.echo(f"\nUnenriched tickets: {total} remaining\n")
+        click.echo(f"{'ID':<8} {'Score':>5}  {'Status':<8} {'Created':<12} {'Days':>5}  {'URL'}")
+        click.echo('-' * 90)
+        for t in tickets:
+            days = f"{t.resolution_days}" if t.resolution_days is not None else "open"
+            click.echo(f"{t.zendesk_id:<8} {t.auto_score or 0:>5.0f}  {t.status:<8} "
+                        f"{str(t.created_date):<12} {days:>5}  {t.zendesk_url}")
+
+
 @cli.command('rescore')
 def cmd_rescore():
     """Recalculate all ticket scores."""
