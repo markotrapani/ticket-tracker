@@ -141,15 +141,16 @@ def suggest_category(ticket):
     # Subject is the highest-signal field
     subject_text = (ticket.subject or '').lower()
 
-    # High-signal fields (root cause, resolution)
+    # High-signal fields (root cause, resolution, steps taken)
     focused_text = ' '.join(filter(None, [
-        ticket.root_cause, ticket.resolution, ticket.interview_notes
+        ticket.root_cause, ticket.steps_taken, ticket.resolution,
+        ticket.interview_notes
     ])).lower()
 
     # Full text including description (may contain noise like stack traces)
     full_text = ' '.join(filter(None, [
         ticket.subject, ticket.description, ticket.root_cause,
-        ticket.resolution, ticket.interview_notes
+        ticket.steps_taken, ticket.resolution, ticket.interview_notes
     ])).lower()
 
     if not full_text.strip():
@@ -270,7 +271,7 @@ def get_skill_gaps():
             for t in tickets:
                 text = ' '.join(filter(None, [
                     t.subject, t.description, t.root_cause,
-                    t.resolution, t.interview_notes, t.category
+                    t.steps_taken, t.resolution, t.interview_notes, t.category
                 ])).lower()
                 if any(kw in text for kw in keywords):
                     matching.append({

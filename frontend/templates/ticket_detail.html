@@ -34,6 +34,7 @@
                     <div class="col-md-4"><strong>Created:</strong> {{ ticket.created_date }}</div>
                     <div class="col-md-4"><strong>Solved:</strong> {{ ticket.solved_date or 'Open' }}</div>
                     <div class="col-md-4"><strong>Resolution:</strong> {{ ticket.resolution_days if ticket.resolution_days is not none else 'N/A' }} days</div>
+                    <div class="col-md-4"><strong>Priority:</strong> {{ ticket.priority or 'N/A' }}</div>
                     <div class="col-md-4"><strong>Group:</strong> {{ ticket.group_name }}</div>
                     <div class="col-md-4"><strong>Assignee:</strong> {{ ticket.assignee }}</div>
                     <div class="col-md-4"><strong>ZenDesk:</strong> <a href="{{ ticket.zendesk_url }}" target="_blank">Open</a></div>

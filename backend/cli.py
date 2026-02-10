@@ -56,6 +56,7 @@ def cmd_show(zendesk_id):
         click.echo(f"Ticket #{ticket.zendesk_id}  {'*' if ticket.is_starred else ''}")
         click.echo(f"{'='*60}")
         click.echo(f"Status:      {ticket.status}")
+        click.echo(f"Priority:    {ticket.priority or 'N/A'}")
         click.echo(f"Group:       {ticket.group_name}")
         click.echo(f"Assignee:    {ticket.assignee}")
         click.echo(f"Created:     {ticket.created_date}")
@@ -85,12 +86,14 @@ def cmd_show(zendesk_id):
         if tags:
             click.echo(f"Tags:        {', '.join(tags)}")
 
-        if ticket.description:
-            click.echo(f"\nDescription:\n{ticket.description[:500]}")
+        if ticket.summary:
+            click.echo(f"\nSummary (STAR: Situation):\n{ticket.summary[:500]}")
         if ticket.root_cause:
-            click.echo(f"\nRoot Cause:\n{ticket.root_cause[:300]}")
+            click.echo(f"\nRoot Cause:\n{ticket.root_cause[:500]}")
+        if ticket.steps_taken:
+            click.echo(f"\nSteps Taken (STAR: Action):\n{ticket.steps_taken[:500]}")
         if ticket.resolution:
-            click.echo(f"\nResolution:\n{ticket.resolution[:300]}")
+            click.echo(f"\nResolution (STAR: Result):\n{ticket.resolution[:500]}")
         if ticket.interview_notes:
             click.echo(f"\nInterview Notes:\n{ticket.interview_notes}")
 
@@ -159,6 +162,7 @@ def cmd_search(query, limit):
                 Ticket.customer_name.like(like),
                 Ticket.description.like(like),
                 Ticket.root_cause.like(like),
+                Ticket.steps_taken.like(like),
                 Ticket.resolution.like(like),
                 Ticket.category.like(like),
             )
@@ -296,17 +300,22 @@ def cmd_export(fmt, starred, min_score, output):
             for t in tickets:
                 lines.append(f'## [{t.zendesk_id}]({t.zendesk_url}) - {t.subject or "No subject"}')
                 lines.append(f'**Score:** {t.final_score} | **Status:** {t.status} | '
+                             f'**Priority:** {t.priority or "N/A"} | '
                              f'**Created:** {t.created_date} | **Resolved:** {t.solved_date or "Open"}')
                 if t.customer_name:
                     lines.append(f'**Customer:** {t.customer_name}')
                 if t.category:
                     lines.append(f'**Category:** {t.category}')
-                if t.description:
-                    lines.append(f'\n{t.description[:500]}')
+                if t.summary:
+                    lines.append(f'\n### Situation\n{t.summary}')
+                if t.root_cause:
+                    lines.append(f'\n### Root Cause\n{t.root_cause[:500]}')
+                if t.steps_taken:
+                    lines.append(f'\n### Steps Taken\n{t.steps_taken[:500]}')
                 if t.resolution:
-                    lines.append(f'\n**Resolution:** {t.resolution[:300]}')
+                    lines.append(f'\n### Resolution\n{t.resolution[:500]}')
                 if t.interview_notes:
-                    lines.append(f'\n**Interview Notes:** {t.interview_notes}')
+                    lines.append(f'\n### Interview Notes\n{t.interview_notes}')
                 lines.append('\n---\n')
             content = '\n'.join(lines)
 

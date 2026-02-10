@@ -26,6 +26,7 @@ class Ticket(db.Model):
     # Classification
     category = db.Column(db.String(100), nullable=True)
     product_area = db.Column(db.String(100), nullable=True)
+    priority = db.Column(db.String(20), nullable=True)
     severity = db.Column(db.String(10), nullable=True)
     is_production_outage = db.Column(db.Boolean, default=False)
     is_escalation = db.Column(db.Boolean, default=False)
@@ -85,6 +86,7 @@ class Ticket(db.Model):
             'zendesk_url': self.zendesk_url,
             'category': self.category,
             'product_area': self.product_area,
+            'priority': self.priority,
             'severity': self.severity,
             'is_production_outage': self.is_production_outage,
             'is_escalation': self.is_escalation,

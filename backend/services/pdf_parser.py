@@ -471,10 +471,12 @@ def synthesize_investigation(parsed):
     resolution = '\n'.join(resolution_parts).strip()
 
     # Cap total length to keep DB manageable
-    for text, name in [(root_cause, 'root_cause'), (steps_taken, 'steps_taken'),
-                       (resolution, 'resolution')]:
-        if len(text) > 10000:
-            text = text[:10000] + '\n...(truncated)'
+    if len(root_cause) > 10000:
+        root_cause = root_cause[:10000] + '\n...(truncated)'
+    if len(steps_taken) > 10000:
+        steps_taken = steps_taken[:10000] + '\n...(truncated)'
+    if len(resolution) > 10000:
+        resolution = resolution[:10000] + '\n...(truncated)'
 
     return (
         root_cause or metadata_root_cause or '',

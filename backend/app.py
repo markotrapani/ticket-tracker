@@ -34,10 +34,15 @@ def create_app(config=None):
 
 
 def _init_fts(app):
-    """Initialize FTS5 virtual table for full-text search."""
+    """Initialize FTS5 virtual table for full-text search.
+
+    Always drops and recreates to handle schema changes (virtual tables
+    can't be altered in SQLite).
+    """
     with db.engine.connect() as conn:
+        conn.execute(db.text("DROP TABLE IF EXISTS tickets_fts"))
         conn.execute(db.text("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS tickets_fts USING fts5(
+            CREATE VIRTUAL TABLE tickets_fts USING fts5(
                 zendesk_id, subject, customer_name, description,
                 root_cause, steps_taken, resolution, interview_notes, category,
                 content='tickets',
@@ -186,7 +191,8 @@ def register_routes(app):
         data = request.get_json()
 
         updatable = ['subject', 'customer_name', 'summary', 'description', 'root_cause',
-                     'steps_taken', 'resolution', 'category', 'product_area', 'severity',
+                     'steps_taken', 'resolution', 'category', 'product_area',
+                     'priority', 'severity',
                      'is_production_outage', 'is_escalation', 'involved_custom_scripts',
                      'interview_notes', 'skills_demonstrated']
 
@@ -341,6 +347,8 @@ def register_routes(app):
             ticket.subject = parsed['subject']
         if parsed.get('customer_name') and not ticket.customer_name:
             ticket.customer_name = parsed['customer_name']
+        if parsed.get('priority') and not ticket.priority:
+            ticket.priority = parsed['priority']
         if parsed.get('severity') and not ticket.severity:
             ticket.severity = parsed['severity']
         if parsed.get('product_line') and not ticket.product_area:
@@ -524,8 +532,12 @@ def register_routes(app):
             ticket.customer_name = data['customer_name']
         if data.get('root_cause'):
             ticket.root_cause = data['root_cause']
+        if data.get('steps_taken'):
+            ticket.steps_taken = data['steps_taken']
         if data.get('resolution'):
             ticket.resolution = data['resolution']
+        if data.get('summary'):
+            ticket.summary = data['summary']
 
         has_desc = bool(ticket.description)
         has_res = bool(ticket.resolution or ticket.root_cause)
@@ -611,7 +623,8 @@ def register_routes(app):
 
             try:
                 enrichable = ['subject', 'customer_name', 'summary', 'description', 'root_cause',
-                              'steps_taken', 'resolution', 'category', 'product_area', 'severity']
+                              'steps_taken', 'resolution', 'category', 'product_area',
+                              'priority', 'severity']
                 for field in enrichable:
                     if item.get(field):
                         setattr(ticket, field, item[field])
