@@ -101,8 +101,10 @@ SEVERITY_MAP = {
     'critical': 'Critical', 'urgent': 'Urgent', 'high severity': 'High',
 }
 
-SCORE_SIGNALS = ['best', 'top', 'highest', 'most significant', 'most important',
-                 'most complex', 'most interesting', 'highest scored']
+SCORE_SIGNALS_HIGH = ['best', 'top', 'highest', 'most significant', 'most important',
+                      'most complex', 'most interesting', 'highest scored']
+SCORE_SIGNALS_LOW = ['lowest', 'least significant', 'least important', 'least complex',
+                     'least interesting', 'lowest scored', 'simplest', 'easiest']
 
 STOP_WORDS = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'which',
               'where', 'when', 'how', 'did', 'do', 'does', 'can', 'could',
@@ -116,7 +118,7 @@ STOP_WORDS = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'which',
               'problems', 'problem', 'cases', 'case', 'scored', 'score',
               'resolve', 'resolved', 'most', 'many', 'much',
               'tell', 'more', 'first', 'second', 'third', 'last', 'one', 'ones',
-              'why', 'happened', 'next', 'worst', 'impact', 'elaborate', 'explain',
+              'why', 'happened', 'next', 'impact', 'elaborate', 'explain',
               'detail', 'details', 'specifically', 'exactly', 'particular',
               'above', 'them', 'those', 'these', 'previous', 'same', 'other',
               'also', 'too', 'again', 'further', 'interesting', 'notable',
@@ -130,12 +132,32 @@ def parse_query(question):
     filters = {}
     keywords = []
     sort_by_score = False
+    sort_score_asc = False  # True = sort ascending (lowest first)
     limit = 10
 
-    # Check score signals first
-    for signal in SCORE_SIGNALS:
+    # Extract explicit count from query (e.g., "top 5", "show me 3", "find 20")
+    count_match = re.search(r'\b(?:top|first|show\s+me|find|get|give\s+me)\s+(\d{1,2})\b', q)
+    if not count_match:
+        count_match = re.search(r'\b(\d{1,2})\s+(?:tickets?|results?|matches?)\b', q)
+    if count_match:
+        requested = int(count_match.group(1))
+        if 1 <= requested <= 50:
+            limit = requested
+            # "top N" / "first N" imply score sorting
+            prefix = q[count_match.start():count_match.end()].split()[0]
+            if prefix in ('top', 'first'):
+                sort_by_score = True
+            q = q[:count_match.start()] + ' ' + q[count_match.end():]
+
+    # Check score signals (high and low)
+    for signal in SCORE_SIGNALS_HIGH:
         if signal in q:
             sort_by_score = True
+            q = q.replace(signal, ' ')
+    for signal in SCORE_SIGNALS_LOW:
+        if signal in q:
+            sort_by_score = True
+            sort_score_asc = True
             q = q.replace(signal, ' ')
 
     # Check boolean signals (multi-word, check first)
@@ -144,10 +166,10 @@ def parse_query(question):
             filters.update(bool_filters)
             q = q.replace(phrase, ' ')
 
-    # Check severity
+    # Check severity — treat as keywords (severity field is unreliable: 858/898 are "Normal")
     for term, sev in SEVERITY_MAP.items():
         if term in q:
-            filters['severity'] = sev
+            keywords.append(term)
             q = q.replace(term, ' ')
             break
 
@@ -248,6 +270,7 @@ def parse_query(question):
         'keywords': unique_keywords,
         'filters': filters,
         'sort_by_score': sort_by_score,
+        'sort_score_asc': sort_score_asc,
         'limit': limit,
         'original_question': question,
         'is_followup': is_followup,
@@ -262,6 +285,7 @@ def retrieve_tickets(parsed_query):
     filters = parsed_query['filters']
     limit = parsed_query['limit']
     sort_by_score = parsed_query['sort_by_score']
+    sort_score_asc = parsed_query.get('sort_score_asc', False)
 
     # Try FTS5 first if we have keywords
     tickets = []
@@ -273,7 +297,6 @@ def retrieve_tickets(parsed_query):
                 JOIN tickets_fts fts ON t.id = fts.rowid
                 WHERE tickets_fts MATCH :query
                 ORDER BY rank
-                LIMIT 100
             """)
             rows = db.session.execute(fts_query, {'query': fts_term}).fetchall()
             if rows:
@@ -339,9 +362,9 @@ def retrieve_tickets(parsed_query):
                 continue
         filtered.append(t)
 
-    # Sort: by score (desc) if score signal, otherwise by relevance (keep FTS order) + score
+    # Sort: by score if score signal, otherwise by relevance (keep FTS order) + score
     if sort_by_score:
-        filtered.sort(key=lambda t: t.final_score or 0, reverse=True)
+        filtered.sort(key=lambda t: t.final_score or 0, reverse=not sort_score_asc)
     else:
         filtered.sort(key=lambda t: t.final_score or 0, reverse=True)
 

@@ -14,6 +14,83 @@ from backend.services import scoring, stats
 from backend.services.pdf_parser import synthesize_investigation, build_summary
 
 
+# Keywords that indicate an actual production outage (not just "production environment")
+_OUTAGE_PHRASES = [
+    'production outage', 'service outage', 'complete outage',
+    'database down', 'cluster down', 'database is down', 'cluster is down',
+    'service down', 'service is down', 'node down', 'nodes down',
+    'not reachable', 'not responding', 'unreachable',
+    'service disruption', 'complete failure', 'total failure',
+    'customers affected', 'customers impacted', 'customer impact',
+    'application down', 'app is down', 'site is down', 'site down',
+    'data loss', 'data corruption',
+    'lost the database', 'lost database', 'database lost',
+    'lost the cluster', 'lost cluster', 'cluster lost',
+    'cluster failure', 'node failure', 'shard failure',
+    'database failure', 'instance failure',
+    'cluster is impacted', 'services downtime',
+    'redis broke', 'redis downtime',
+    'no longer working', 'stopped responding',
+    'shards unresponsive', 'unresponsive shard',
+    'production downtime', 'connectivity loss',
+]
+# Single-word signals that need at least 2 matches to flag as outage
+_OUTAGE_WEAK_SIGNALS = ['outage', 'downtime', 'unavailable', 'offline', 'unresponsive']
+
+
+# Authors whose comments are excluded from outage detection (template/boilerplate text)
+_BOT_AUTHORS = {'Redis Support Bot Agent', 'Analyzer Bot', 'PagerDuty'}
+
+# Boilerplate snippets that indicate template text, not actual incident description
+_BOILERPLATE_MARKERS = [
+    'this is an automated response',
+    'include the keywords production, urgent, or outage',
+    'please follow the instructions to create a support package',
+]
+
+
+def _detect_outage(parsed, extra_text=''):
+    """Detect actual production outage from conversation text.
+
+    Checks subject line + first 10 non-bot comments + optional extra text
+    for outage signals. Filters out boilerplate/template text that contains
+    outage keywords generically. Strong phrases (single match = outage),
+    weak signals (need 2+ matches).
+    """
+    # Build text from subject + first 10 non-bot, non-boilerplate comments
+    parts = []
+    if parsed.get('subject'):
+        parts.append(parsed['subject'])
+    comments = parsed.get('comments', [])
+    added = 0
+    for c in comments:
+        if added >= 10:
+            break
+        author = c.get('author', '')
+        if author in _BOT_AUTHORS:
+            continue
+        body = c.get('body', '')
+        if any(marker in body.lower() for marker in _BOILERPLATE_MARKERS):
+            continue
+        parts.append(body)
+        added += 1
+    if extra_text:
+        parts.append(extra_text)
+    text = ' '.join(parts).lower()
+
+    if not text.strip():
+        return False
+
+    # Strong phrases: any one match means outage
+    for phrase in _OUTAGE_PHRASES:
+        if phrase in text:
+            return True
+
+    # Weak signals: need 2+ distinct matches
+    weak_matches = sum(1 for signal in _OUTAGE_WEAK_SIGNALS if signal in text)
+    return weak_matches >= 2
+
+
 def enrich_ticket_from_parsed(ticket, parsed, skip_star=False):
     """Enrich a ticket with data from a parsed PDF.
 
@@ -38,7 +115,10 @@ def enrich_ticket_from_parsed(ticket, parsed, skip_star=False):
     if parsed.get('product_line') and not ticket.product_area:
         ticket.product_area = parsed['product_line']
     if parsed.get('is_production'):
-        ticket.is_production_outage = True
+        ticket.is_production = True
+
+    # Detect actual outage from conversation keywords (not just "production environment")
+    ticket.is_production_outage = _detect_outage(parsed)
 
     # Zendesk infrastructure metadata (only overwrite empty fields)
     if parsed.get('product_line') and not ticket.product_line:

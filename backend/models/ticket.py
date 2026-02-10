@@ -28,7 +28,8 @@ class Ticket(db.Model):
     product_area = db.Column(db.String(100), nullable=True)
     priority = db.Column(db.String(20), nullable=True)
     severity = db.Column(db.String(10), nullable=True)
-    is_production_outage = db.Column(db.Boolean, default=False)
+    is_production = db.Column(db.Boolean, default=False)  # "This is a production environment" from Zendesk
+    is_production_outage = db.Column(db.Boolean, default=False)  # Actual outage detected from conversation
     is_escalation = db.Column(db.Boolean, default=False)
     involved_custom_scripts = db.Column(db.Boolean, default=False)
 
@@ -101,6 +102,7 @@ class Ticket(db.Model):
             'product_area': self.product_area,
             'priority': self.priority,
             'severity': self.severity,
+            'is_production': self.is_production,
             'is_production_outage': self.is_production_outage,
             'is_escalation': self.is_escalation,
             'involved_custom_scripts': self.involved_custom_scripts,
