@@ -32,7 +32,7 @@
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link {% if request.path == '/chat' %}active{% endif %}" href="/chat">
+                        <a class="nav-link {% if request.path == '/chat' %}active{% endif %}" href="/chat" id="chatNavLink">
                             <i class="bi bi-chat-dots"></i> Chat
                         </a>
                     </li>
@@ -108,6 +108,25 @@
         </div>
     </div>
 
+    <script>
+    // Check Ollama availability and update Chat nav link
+    fetch('/api/chat/ollama/health').then(r => r.json()).then(data => {
+        const link = document.getElementById('chatNavLink');
+        if (!link) return;
+        if (!data.available || !data.models || data.models.length === 0) {
+            link.classList.add('opacity-50');
+            link.title = 'Ollama not running \u2013 Chat works in retrieve-only mode';
+            link.innerHTML = '<i class="bi bi-chat-dots"></i> Chat <i class="bi bi-exclamation-circle-fill text-warning" style="font-size:0.65rem"></i>';
+        }
+    }).catch(() => {
+        const link = document.getElementById('chatNavLink');
+        if (link) {
+            link.classList.add('opacity-50');
+            link.title = 'Ollama not running \u2013 Chat works in retrieve-only mode';
+            link.innerHTML = '<i class="bi bi-chat-dots"></i> Chat <i class="bi bi-exclamation-circle-fill text-warning" style="font-size:0.65rem"></i>';
+        }
+    });
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>

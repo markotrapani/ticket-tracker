@@ -9,6 +9,53 @@ their most impactful work from hundreds of resolved tickets.
 
 ---
 
+## 📋 Prerequisites
+
+| Requirement      | Version  | Purpose                          | Required? |
+| ---------------- | -------- | -------------------------------- | --------- |
+| **Python**       | 3.10+    | Backend, CLI, PDF parsing        | Yes       |
+| **pip**          | latest   | Python package management        | Yes       |
+| **Ollama**       | latest   | Local LLM for RAG chat           | Optional  |
+| **Playwright**   | latest   | Browser automation (MCP server)  | Optional  |
+
+**Core dependencies** (installed via `pip install -r requirements.txt`):
+Flask, SQLAlchemy, Click, pdfplumber, Chart.js (CDN), Bootstrap 5 (CDN)
+
+### Installing Ollama (for RAG Chat)
+
+The Chat page uses a local LLM to synthesize answers from your
+ticket data. Without Ollama, chat still works in retrieve-only
+mode (returns matching ticket cards without AI synthesis).
+
+```bash
+# macOS
+brew install ollama
+
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Start the server
+ollama serve
+
+# Pull the default model (~4GB download)
+ollama pull mistral-nemo
+```
+
+The chat page auto-detects available models. Any Ollama model
+works, but `mistral-nemo` is the default.
+
+### Installing Playwright (for MCP Server)
+
+Only needed if you want automated Zendesk PDF scraping via the
+MCP server. Not required for manual CSV/PDF import.
+
+```bash
+pip install "mcp[cli]" playwright
+playwright install chromium
+```
+
+---
+
 ## 🚀 Quick Start
 
 ```bash
@@ -27,7 +74,105 @@ python backend/cli.py import-csv sample_data/your_export.csv
 # Start web UI
 python run.py
 # Visit http://localhost:5050
+
+# (Optional) Start Ollama for AI chat
+ollama serve &
 ```
+
+---
+
+## 📥 Importing Your Data
+
+Getting tickets into the system is a two-step process: **CSV import**
+for basic metadata, then **PDF enrichment** for full conversation
+threads and AI analysis.
+
+### Step 1: CSV Import (Metadata)
+
+Export your tickets from ZenDesk as a **semicolon-delimited CSV** with
+these columns:
+
+```csv
+"Ticket ID";"Ticket status";"Ticket group";"Assignee name";"Ticket created - Date";"Ticket solved - Date"
+"123456";"Solved";"Support - L3";"Jane Doe";"2025-06-15";"2025-07-02"
+"123457";"Open";"Support - L3";"Jane Doe";"2025-09-01";""
+```
+
+**Required columns:** Ticket ID, Ticket status, Ticket group,
+Assignee name, Ticket created - Date
+
+**Optional columns:** Ticket solved - Date (blank for open tickets)
+
+**Date format:** `YYYY-MM-DD`
+
+Import via CLI or the web UI Import page:
+
+```bash
+python backend/cli.py import-csv sample_data/your_export.csv
+```
+
+This creates a record for each ticket with basic metadata and
+calculates an auto-score (0-55). At this stage, tickets are at the
+`metadata_only` enrichment level — they have no descriptions,
+conversations, or STAR analysis yet.
+
+Re-importing the same CSV is safe: existing tickets are updated with
+the latest metadata, not duplicated.
+
+### Step 2: PDF Enrichment (Conversations)
+
+To unlock the full score range (0-100) and get detailed conversation
+data, enrich tickets with ZenDesk **print-view PDFs**. These are the
+PDFs you get from a ticket's three-dot menu > "Print ticket" in the
+ZenDesk agent UI.
+
+**Manual upload (Web UI):**
+
+1. Go to the **Import** page (`/import`) and select the **PDF** tab
+2. Upload a single PDF — the ticket ID is auto-detected from the
+   filename or PDF content
+3. Or use the **Batch PDF** tab to drag-and-drop multiple PDFs at
+   once (filenames must contain the ticket ID, e.g.
+   `ticket_153756.pdf`)
+
+**Manual upload (API):**
+
+```bash
+# Single PDF
+curl -X POST http://localhost:5050/api/import/pdf \
+  -F "file=@ticket_153756.pdf"
+
+# Batch upload
+curl -X POST http://localhost:5050/api/import/pdf/batch \
+  -F "files=@ticket_153756.pdf" \
+  -F "files=@ticket_153800.pdf"
+```
+
+**Automated scraping (MCP Server):**
+
+If you have many tickets, the MCP server can automate the entire
+process using Playwright browser automation — logging into ZenDesk,
+navigating to each ticket, and downloading the print-view PDF
+automatically. See the
+[MCP Server Integration](#-mcp-server-integration) section.
+
+### Step 3: AI Analysis (Optional)
+
+Once a ticket has PDF conversation data, you can generate STAR-format
+analysis (Situation, Task, Action, Result) for interview preparation:
+
+- **Heuristic:** The enrichment pipeline auto-generates basic STAR
+  fields from keyword analysis
+- **AI-powered:** The MCP server's `save_ticket_analysis` tool lets
+  Claude read the full conversation and write detailed STAR analysis
+
+### What Each Step Unlocks
+
+| Step              | Data Added                             | Max Score |
+| ----------------- | -------------------------------------- | --------- |
+| CSV Import        | ID, status, dates, assignee, group     | 55        |
+| PDF Enrichment    | Subject, description, conversations    | 100       |
+| AI Analysis       | Summary, root cause, steps, resolution | 100       |
 
 ---
 
@@ -48,6 +193,8 @@ python run.py
 
 ## Table of Contents
 
+- [Prerequisites](#-prerequisites)
+- [Importing Your Data](#-importing-your-data)
 - [Core Features](#-core-features)
 - [Web Interface](#-web-interface)
 - [Significance Scoring](#-significance-scoring-0-100)
@@ -206,6 +353,10 @@ querying your ticket database:
 "Top scored tickets about TLS certificate issues"
 "Find tickets where we created a custom script"
 ```
+
+**Requires Ollama** for LLM mode — see
+[Prerequisites](#-prerequisites) for setup. Falls back to
+retrieve-only mode automatically if Ollama is not running.
 
 **How it works:**
 
