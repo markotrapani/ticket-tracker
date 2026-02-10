@@ -64,6 +64,7 @@
 let chatMode = 'ollama';
 let ollamaAvailable = false;
 let messages = [];
+let lastRetrievedContext = null; // Preserved for follow-up questions
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
@@ -116,6 +117,7 @@ function askSuggestion(btn) {
 
 function clearChat() {
     messages = [];
+    lastRetrievedContext = null;
     const el = document.getElementById('chatMessages');
     el.innerHTML = '';
     document.getElementById('emptyState')?.remove();
@@ -198,17 +200,23 @@ function addAssistantBubble() {
     const el = document.getElementById('chatMessages');
     const div = document.createElement('div');
     div.className = 'd-flex justify-content-start mb-3';
+    const contentDiv = document.createElement('div');
     div.innerHTML = `
-        <div class="chat-bubble chat-bubble-assistant" id="streamingBubble">
+        <div class="chat-bubble chat-bubble-assistant">
             <div class="d-flex align-items-center gap-2 mb-1">
                 <i class="bi bi-robot text-success"></i>
                 <strong class="small">Ollama</strong>
             </div>
-            <div id="streamingContent"><span class="spinner"></span></div>
         </div>`;
+    contentDiv.innerHTML = `
+        <div class="d-flex align-items-center gap-2">
+            <div class="ollama-spinner"></div>
+            <span class="small generating-text" style="color: #8bc9a4;">Generating response...</span>
+        </div>`;
+    div.querySelector('.chat-bubble-assistant').appendChild(contentDiv);
     el.appendChild(div);
     el.scrollTop = el.scrollHeight;
-    return document.getElementById('streamingContent');
+    return contentDiv;
 }
 
 function addLoadingIndicator() {
@@ -228,6 +236,29 @@ function removeLoadingIndicator() {
     document.getElementById('loadingIndicator')?.remove();
 }
 
+// Client-side follow-up detection — no server call needed
+const NEW_QUERY_SIGNALS = [
+    // Category keywords that signal a new topic
+    'crdb', 'active-active', 'cluster', 'shard', 'failover', 'replica',
+    'performance', 'latency', 'slow', 'memory', 'eviction',
+    'connectivity', 'connection', 'timeout', 'dns', 'network',
+    'tls', 'ssl', 'certificate', 'mtls',
+    'acl', 'authentication', 'ldap', 'saml',
+    'upgrade', 'migration', 'monitoring', 'alert', 'billing',
+    'config', 'persistence', 'rdb', 'aof',
+    // Severity/score signals
+    'p1', 'p2', 'critical', 'urgent',
+    // Action signals that imply a new search
+    'find', 'show', 'list', 'search', 'look up',
+    // Product names
+    'redis cloud', 'redis software', 'kubernetes', 'k8s',
+];
+
+function isNewQuery(question) {
+    const q = question.toLowerCase();
+    return NEW_QUERY_SIGNALS.some(signal => q.includes(signal));
+}
+
 async function sendMessage() {
     const input = document.getElementById('chatInput');
     const question = input.value.trim();
@@ -235,65 +266,35 @@ async function sendMessage() {
 
     input.value = '';
     addUserBubble(question);
-    addLoadingIndicator();
+    messages.push({role: 'user', content: question});
 
     try {
-        // Step 1: Always retrieve tickets first
-        const retrieveResp = await fetch('/api/chat/retrieve', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({question})
-        });
-        removeLoadingIndicator();
-        const data = await retrieveResp.json();
-        addContextBubble(data);
-        messages.push({role: 'user', content: question});
+        // Decide: new retrieval or follow-up on existing context?
+        const needsRetrieval = !lastRetrievedContext || isNewQuery(question);
 
-        // Step 2: Generate a summary response
-        if (chatMode === 'ollama' && ollamaAvailable && data.ticket_count > 0) {
-            // Stream response from Ollama
-            const model = document.getElementById('modelSelect').value;
-            const contentEl = addAssistantBubble();
-            contentEl.textContent = '';
-
-            const resp = await fetch('/api/chat/ollama', {
+        if (needsRetrieval) {
+            // New query — retrieve tickets
+            addLoadingIndicator();
+            const retrieveResp = await fetch('/api/chat/retrieve', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({question, model})
+                body: JSON.stringify({question})
             });
+            removeLoadingIndicator();
+            const data = await retrieveResp.json();
+            addContextBubble(data);
+            lastRetrievedContext = data.formatted_context;
 
-            const reader = resp.body.getReader();
-            const decoder = new TextDecoder();
-            let fullText = '';
-
-            while (true) {
-                const {done, value} = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
-
-                for (const line of lines) {
-                    const jsonStr = line.slice(6);
-                    if (jsonStr === '[DONE]') break;
-                    try {
-                        const obj = JSON.parse(jsonStr);
-                        if (obj.error) {
-                            contentEl.innerHTML = `<span class="text-danger">${escapeHtml(obj.error)}</span>`;
-                            break;
-                        }
-                        if (obj.response) {
-                            fullText += obj.response;
-                            contentEl.textContent = fullText;
-                            document.getElementById('chatMessages').scrollTop =
-                                document.getElementById('chatMessages').scrollHeight;
-                        }
-                    } catch(e) {}
-                }
+            if (chatMode === 'ollama' && ollamaAvailable && data.ticket_count > 0) {
+                await streamOllamaResponse(question, data.formatted_context);
+            } else if (data.ticket_count > 0) {
+                addHeuristicSummary(data);
             }
-            messages.push({role: 'assistant', content: fullText});
-        } else if (data.ticket_count > 0) {
-            // No Ollama — show a basic heuristic summary
-            addHeuristicSummary(data);
+        } else {
+            // Follow-up — reuse previous context, just ask Ollama
+            if (chatMode === 'ollama' && ollamaAvailable) {
+                await streamOllamaResponse(question, lastRetrievedContext);
+            }
         }
     } catch(e) {
         removeLoadingIndicator();
@@ -305,6 +306,55 @@ async function sendMessage() {
     }
 
     input.focus();
+}
+
+async function streamOllamaResponse(question, context) {
+    const model = document.getElementById('modelSelect').value;
+    const contentEl = addAssistantBubble();
+
+    const resp = await fetch('/api/chat/ollama', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({question, model, history: messages, context})
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let fullText = '';
+    let firstToken = true;
+
+    while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+
+        for (const line of lines) {
+            const jsonStr = line.slice(6);
+            if (jsonStr === '[DONE]') break;
+            try {
+                const obj = JSON.parse(jsonStr);
+                if (obj.error) {
+                    contentEl.innerHTML = `<span class="text-danger">${escapeHtml(obj.error)}</span>`;
+                    break;
+                }
+                const token = obj.message?.content || obj.response || '';
+                if (token) {
+                    if (firstToken) {
+                        contentEl.innerHTML = '';
+                        firstToken = false;
+                    }
+                    fullText += token;
+                    contentEl.innerHTML = renderMarkdown(fullText);
+                    document.getElementById('chatMessages').scrollTop =
+                        document.getElementById('chatMessages').scrollHeight;
+                }
+            } catch(e) {}
+        }
+    }
+    // Final render
+    contentEl.innerHTML = renderMarkdown(fullText);
+    messages.push({role: 'assistant', content: fullText});
 }
 
 function addHeuristicSummary(data) {
@@ -339,6 +389,31 @@ function addHeuristicSummary(data) {
         </div>`;
     el.appendChild(div);
     el.scrollTop = el.scrollHeight;
+}
+
+function renderMarkdown(text) {
+    // Lightweight markdown renderer for Ollama responses
+    let html = escapeHtml(text);
+    // Headers: ### Header
+    html = html.replace(/^### (.+)$/gm, '<strong style="font-size:1rem">$1</strong>');
+    html = html.replace(/^## (.+)$/gm, '<strong style="font-size:1.05rem">$1</strong>');
+    // Bold: **text**
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic: *text*
+    html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>');
+    // Bullet lists: - item or * item
+    html = html.replace(/^[\-\*] (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+    // Numbered lists: 1. item
+    html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+    // Ticket references: #123456
+    html = html.replace(/#(\d{5,7})/g, '<a href="/tickets/$1" target="_blank" class="text-primary">#$1</a>');
+    // Newlines to <br>
+    html = html.replace(/\n/g, '<br>');
+    // Clean up extra <br> around block elements
+    html = html.replace(/<br>(<ul|<\/ul>|<li|<\/li>)/g, '$1');
+    html = html.replace(/(<\/ul>|<\/li>)<br>/g, '$1');
+    return html;
 }
 
 function escapeHtml(text) {

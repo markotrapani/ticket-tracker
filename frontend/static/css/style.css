@@ -46,7 +46,9 @@
 .chat-bubble { max-width: 85%; padding: 0.75rem 1rem; border-radius: 12px; margin-bottom: 0.25rem; }
 .chat-bubble-user { background-color: rgba(13, 110, 253, 0.2); margin-left: auto; }
 .chat-bubble-context { background-color: rgba(108, 117, 125, 0.12); border: 1px solid rgba(108, 117, 125, 0.25); }
-.chat-bubble-assistant { background-color: rgba(25, 135, 84, 0.12); border: 1px solid rgba(25, 135, 84, 0.25); max-width: 90%; }
+.chat-bubble-assistant { background-color: rgba(25, 135, 84, 0.12); border: 1px solid rgba(25, 135, 84, 0.25); max-width: 90%; overflow: hidden; }
+.chat-bubble-assistant ul, .chat-bubble-assistant ol { padding-left: 1.5rem; margin-bottom: 0.5rem; }
+.chat-bubble-assistant li { margin-bottom: 0.2rem; }
 .chat-ticket-card { border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.5rem 0.75rem;
                     margin-bottom: 0.4rem; transition: border-color 0.15s, background 0.15s; }
 .chat-ticket-card:hover { border-color: rgba(13, 110, 253, 0.4); background: rgba(13, 110, 253, 0.05); }
@@ -56,5 +58,9 @@
 
 /* Loading spinner */
 .spinner { display: inline-block; width: 1rem; height: 1rem; border: 2px solid rgba(255,255,255,0.3);
-           border-radius: 50%; border-top-color: #fff; animation: spin 0.6s linear infinite; }
+           border-radius: 50%; border-top-color: #fff; animation: spin 0.6s linear infinite; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.generating-text { animation: pulse 1.5s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.ollama-spinner { width: 1.25rem; height: 1.25rem; border: 2.5px solid rgba(25, 135, 84, 0.25);
+                  border-radius: 50%; border-top-color: #198754; animation: spin 0.7s linear infinite; flex-shrink: 0; }

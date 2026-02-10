@@ -114,7 +114,14 @@ STOP_WORDS = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'which',
               'been', 'be', 'it', 'its', 'there', 'their', 'they', 'tickets',
               'ticket', 'involved', 'involving', 'related', 'issues', 'issue',
               'problems', 'problem', 'cases', 'case', 'scored', 'score',
-              'resolve', 'resolved', 'most', 'many', 'much'}
+              'resolve', 'resolved', 'most', 'many', 'much',
+              'tell', 'more', 'first', 'second', 'third', 'last', 'one', 'ones',
+              'why', 'happened', 'next', 'worst', 'impact', 'elaborate', 'explain',
+              'detail', 'details', 'specifically', 'exactly', 'particular',
+              'above', 'them', 'those', 'these', 'previous', 'same', 'other',
+              'also', 'too', 'again', 'further', 'interesting', 'notable',
+              'significant', 'important', 'complex', 'just', 'only', 'please',
+              'thanks', 'thank', 'yes', 'no', 'ok', 'okay'}
 
 
 def parse_query(question):
@@ -123,7 +130,7 @@ def parse_query(question):
     filters = {}
     keywords = []
     sort_by_score = False
-    limit = 15
+    limit = 10
 
     # Check score signals first
     for signal in SCORE_SIGNALS:
@@ -223,12 +230,27 @@ def parse_query(question):
             seen.add(kw)
             unique_keywords.append(kw)
 
+    # Detect follow-up: no keywords/filters extracted, OR explicit follow-up phrases
+    followup_phrases = [
+        'tell me more', 'elaborate', 'explain further', 'go on',
+        'which of those', 'which of them', 'any of those', 'any of them',
+        'the first one', 'the second one', 'the third one', 'the last one',
+        'what about that', 'what about those', 'what about them',
+        'why was that', 'why were those', 'what happened',
+        'how was that', 'how were those', 'how did that',
+        'can you summarize', 'root cause of', 'resolution for',
+        'longest resolution', 'shortest resolution',
+    ]
+    has_followup_phrase = any(p in question.lower() for p in followup_phrases)
+    is_followup = (len(unique_keywords) == 0 and len(filters) == 0 and not sort_by_score) or has_followup_phrase
+
     return {
         'keywords': unique_keywords,
         'filters': filters,
         'sort_by_score': sort_by_score,
         'limit': limit,
         'original_question': question,
+        'is_followup': is_followup,
     }
 
 
@@ -352,17 +374,19 @@ def format_for_llm(tickets, question):
         if t.involved_custom_scripts:
             lines.append("Custom Scripts: Yes")
         if t.summary:
-            lines.append(f"Summary: {t.summary}")
+            lines.append(f"Summary: {t.summary[:500]}")
         if t.root_cause:
-            lines.append(f"Root Cause: {t.root_cause}")
+            lines.append(f"Root Cause: {t.root_cause[:300]}")
         if t.steps_taken:
-            lines.append(f"Steps Taken: {t.steps_taken}")
+            lines.append(f"Steps Taken: {t.steps_taken[:400]}")
         if t.resolution:
-            lines.append(f"Resolution: {t.resolution}")
+            lines.append(f"Resolution: {t.resolution[:300]}")
         lines.append("")
 
     lines.append("---")
-    lines.append("Based on the above ticket data, please answer the question.")
+    lines.append(f"TASK: Summarize the above {len(tickets)} tickets in response to the question: \"{question}\"")
+    lines.append("Highlight the most notable tickets by number, their root causes, and resolutions. "
+                 "Identify patterns across the tickets if any exist.")
     return '\n'.join(lines)
 
 

@@ -809,26 +809,58 @@ def register_routes(app):
         data = request.get_json()
         question = (data or {}).get('question', '').strip()
         model = (data or {}).get('model', 'mistral-nemo')
+        history = (data or {}).get('history', [])
+        provided_context = (data or {}).get('context', '')
         if not question:
             return jsonify({'error': 'Question required'}), 400
 
-        from backend.services.retrieval import query_tickets
-        result = query_tickets(question)
+        # Use provided context (for follow-ups) or retrieve fresh
+        if provided_context:
+            context = provided_context
+        else:
+            from backend.services.retrieval import query_tickets
+            result = query_tickets(question)
+            context = result['formatted_context']
 
         system_prompt = (
-            "You are a support ticket analysis assistant for a Redis Cloud L3 support engineer. "
-            "Answer questions based on the retrieved ticket data provided. "
-            "When referencing tickets, include the ticket number as #XXXXXX. "
-            "Be concise and technical. Summarize patterns when multiple tickets match."
+            "You are a support ticket analysis assistant. You help a Redis Cloud L3 support engineer "
+            "review and discuss their past support tickets.\n\n"
+            "IMPORTANT RULES:\n"
+            "- You will receive retrieved ticket data from the engineer's ticket database.\n"
+            "- Your job is to SUMMARIZE and ANALYZE the retrieved tickets, NOT to answer general knowledge questions.\n"
+            "- Always reference specific tickets by number (e.g. #153987).\n"
+            "- Highlight the most notable tickets: what made them significant, what was the root cause, "
+            "how they were resolved.\n"
+            "- When multiple tickets match, identify patterns and themes across them.\n"
+            "- Be concise and technical. Use bullet points for clarity.\n"
+            "- Do NOT make up information not present in the ticket data.\n"
+            "- Do NOT answer general Redis questions — only discuss the retrieved tickets."
         )
+
+        # Build message list for multi-turn conversation
+        ollama_messages = [{'role': 'system', 'content': system_prompt}]
+
+        # Add conversation history (previous Q&A pairs)
+        for msg in history[-6:]:  # Keep last 3 exchanges to fit context
+            ollama_messages.append({
+                'role': msg.get('role', 'user'),
+                'content': msg.get('content', '')
+            })
+
+        # Current turn: context + follow-up question
+        user_content = context + f"\n\nFollow-up question: {question}" if provided_context else context
+        ollama_messages.append({
+            'role': 'user',
+            'content': user_content
+        })
 
         def generate():
             try:
-                resp = http_requests.post('http://localhost:11434/api/generate', json={
+                resp = http_requests.post('http://localhost:11434/api/chat', json={
                     'model': model,
-                    'prompt': result['formatted_context'],
-                    'system': system_prompt,
+                    'messages': ollama_messages,
                     'stream': True,
+                    'options': {'num_ctx': 16384},
                 }, stream=True, timeout=120)
                 for line in resp.iter_lines():
                     if line:
