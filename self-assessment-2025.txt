@@ -1,0 +1,97 @@
+PROMPT 1: KEY ACCOMPLISHMENTS & STRENGTHS
+
+1. Led technical resolution, PoC advising, and cross-team collaboration on complex K8s/OpenShift cases
+
+On the Avaya ArgoCD admission webhook case (https://redislabs.zendesk.com/agent/tickets/153806), I diagnosed why ArgoCD syncs were failing during Redis Enterprise cluster upgrades — the admission webhook blocks REDB updates while the REC is frozen. Rather than suggesting a quick workaround, I designed and lab-tested a "wait-for-REC" Kubernetes Sync Hook Job with RBAC manifests that the customer can reuse for every future upgrade. Zohar (VP of Support) personally recognized this: "You didn't just fix a symptom; you built a pattern the customer can reuse to keep their upgrades stable. That kind of thinking directly impacts customer trust and how Redis Support is perceived."
+
+Beyond individual case resolution, I provided PoC development and architectural advising for the account, and participated in a coordinated Avaya account review with Brent, Brandon, and Yves. We assembled a dedicated team to analyze a pattern of repeated "stuck enslave task" failures across multiple tickets — preserving logs, building a shared tracking spreadsheet (https://docs.google.com/spreadsheets/d/1KAzOg5Sjomhd7-ogOL608cKiQo1ay2WXzdgNooyg-0w/edit?usp=sharing), and confirming the systemic root cause: a memory leak in the crdb_coordinator process that eventually led the master node to be OOM killed. This turned isolated tickets into a documented pattern that informed both the customer relationship and engineering escalation.
+
+I also designed a custom recovery procedure for a customer's REAADB OpenShift environment (https://redislabs.zendesk.com/agent/tickets/154276) where a CNI + HostPrefix migration caused CCS data loss due to a delayed iSCSI volume reattachment. I traced the root cause through operator logs, CCS snapshots, and VolumeAttachment timestamps, then wrote a step-by-step workaround procedure that the customer used successfully across multiple environments. I am also in the process of documenting both the ArgoCD Sync Hook procedure and the REAADB CNI/HostPrefix recovery procedure as Confluence articles for the team.
+
+Principles demonstrated:
+
+- Go above and beyond — Anticipated future needs by building reusable solutions and procedures, not one-off fixes. Identified root causes proactively across multiple tickets. Currently documenting both procedures as Confluence articles.
+- Stronger together — Actively partnered across the team to resolve a complex account-wide issue and prevent recurrence.
+- Expertly driven — Delivered in-depth, accurate resolutions requiring deep Kubernetes and Redis Enterprise operator knowledge.
+- Customer first always — Understood the customer's context and the impact of each outage. Designed recovery procedures the customer could execute independently.
+
+
+2. Built internal tools that improved team efficiency and deflected support cases
+
+I built and shipped three tools this year:
+
+- Redis ACL Builder (https://github.com/markotrapani/redis-acl-builder) — a public web/desktop app for building and validating Redis ACL rules with Redis 7 and 8 support. Originated from a ticket I worked with Dmitri (https://redislabs.zendesk.com/agent/tickets/138687), where I dug into ACL rule evaluation order and realized a tool would prevent this class of confusion for other customers and engineers. Collin (L3) messaged me unprompted: "Your ACL builder made a ticket of mine much easier just now" — specifically because the @search command category doesn't exist before Redis 8 and the official docs don't version ACL categories, so the tool filled a real gap.
+
+- GT Logs Helper (https://github.com/markotrapani/gtlogs-link-generator) — an internal CLI for uploading/downloading support packages to/from the S3 GT Logs bucket. Adopted primarily by L1 & L2 for their common workflows. Additional releases shipped based on ongoing team feedback.
+
+- LDAP Bind Tester (https://github.com/markotrapani/ldap-bind-tester) — built to diagnose an LDAP empty-password vulnerability for Raymond James (https://redislabs.zendesk.com/agent/tickets/130165, https://redislabs.zendesk.com/agent/tickets/149546). The tool reproduces Redis Enterprise's two-phase LDAP auth flow outside of Redis, which proved the issue could be triggered directly against the customer's Active Directory — confirming it was both a configuration issue on the customer's AD side and an insecure practice in how Redis' LDAP client was implemented.
+
+Principles demonstrated:
+
+- Growth mindset — Saw recurring pain points as opportunities to build tools, not just endure them. Sought feedback (18 GT Logs releases from team input).
+- Stronger together — Made myself available to others by building shared tools adopted across all support tiers.
+- Go above and beyond — The ACL Builder originated from a specific ticket but was designed to help the broader team and future customers. The LDAP Bind Tester uncovered both a customer config issue and a product security concern.
+- Expertly driven — Proactively expanded my skills (Electron desktop apps, CLI tooling, browser automation) and shared knowledge with colleagues through the tools themselves.
+
+
+3. Advised a customer through a complex ElastiCache-to-Redis Cloud migration, winning business from a key competitor
+
+On an ElastiCache-to-Redis Cloud migration (https://redislabs.zendesk.com/agent/tickets/153756), the customer had 2.1M keys and couldn't migrate because keys with names >64KB were failing with standard RIOT-X tooling. I researched the Spring Batch internals to explain why --skip doesn't work for this error class, and proposed a SHA256 hashing architecture to address their key naming pattern going forward. While I also wrote custom migration scripts during the investigation, the real value was the architectural guidance — the customer adopted the new key design approach and successfully migrated all production instances from ElastiCache to Redis Cloud.
+
+Principles demonstrated:
+
+- Customer first always — Found a way to say "yes" when standard tooling said "no," keeping a competitive migration on track.
+- Expertly driven — Delivered accurate, in-depth guidance that required understanding Spring Batch internals, Redis key design patterns, and migration tooling limitations.
+- Go above and beyond — Educated the customer on why their key naming pattern was problematic and proposed a sustainable architecture, turning a migration blocker into a platform improvement. The end result: a customer moved off a direct competitor and onto Redis Cloud.
+
+
+Additionally: Cross-team knowledge sharing and documentation
+
+- Authored two internal Confluence articles: "How to deploy Grafana Dashboards on K8s (Grafana Operator)" (https://redislabs.atlassian.net/wiki/spaces/CS/pages/5612601461) and "How to create a full-chain CA-signed certificate bundle" (https://redislabs.atlassian.net/wiki/spaces/CS/pages/5597397065).
+- Reviewed and provided technical input on Redis 8 ACL knowledge base articles with Natalie (KB team): "Secure Your Redis Cloud Database" (https://redislabs.atlassian.net/wiki/spaces/CKB/pages/5336203352) and "Understanding ACL Category Changes in Redis 8" (https://redislabs.atlassian.net/wiki/spaces/CKB/pages/5614928004) — after presenting on ACLs (https://docs.google.com/presentation/d/1Ajl7fB7CZxN4S1MUS6cCoZhTBXK9QvSNUXJMt6WwBBI) at a Support team meeting. Flagged a relevant Redis 8 bug (https://redislabs.atlassian.net/browse/RED-176878) affecting module ACL categories, and proposed including the ACL Builder as a validation tool in the KB.
+- Invited by Michelle (Docs team manager) to participate in a Docs Usability Study at the SF onsite — the only Support Engineer asked.
+
+Principles: Stronger together, Expertly driven, Growth mindset
+
+
+========================================
+
+PROMPT 2: KEY SKILLS OR AREAS TO STRENGTHEN
+
+1. Slowing down to ask: "what is the customer's goal?" before jumping into solving a particular problem too quickly
+
+My natural instinct when I see a technical challenge is to start solving it immediately. That bias toward action is usually a strength, but it can lead me to invest effort in the wrong direction if I haven't first confirmed what the customer actually needs. A clear example: on the ElastiCache migration (https://redislabs.zendesk.com/agent/tickets/153756), I wrote custom migration scripts before stepping back to understand the customer's real goal. The scripts weren't ultimately needed — the real value I delivered was architectural guidance on key design that unblocked the migration entirely. I got to the right answer, but I could have gotten there faster and with less wasted effort if I'd started by asking: what is the customer actually trying to achieve, and does this problem really need to be solved the way I'm framing it?
+
+Steps to grow: Before diving into technical work on a ticket, I want to build a habit of pausing to ask: What is the customer's actual goal? Is there a simpler path? Could we reframe the problem entirely? This is especially important for migration and architecture cases (PoCs and consultative-thinking) where the customer may be anchored on one approach but open to a better one.
+
+2. Structuring knowledge transfer more deliberately
+
+I've created useful documentation this year (Confluence articles, internal tools, KB reviews), but I know there may have been more opportunities I've let slip — cases where I solved something worth documenting and didn't prioritize writing it up. I want to get better at recognizing those opportunities in the moment and following through on turning them into Confluence articles.
+
+Steps to grow: Start by completing the two articles I already have in progress (ArgoCD Sync Hook, REAADB CNI/HostPrefix recovery). Beyond that, build a habit of flagging documentation-worthy cases as I work them, rather than realizing after the fact.
+
+
+Strongest principle: Go above and beyond
+
+This comes naturally to me. Whether it's building a reusable Kubernetes Sync Hook instead of a one-off workaround, turning a single ticket into a public tool, or proposing an architecture change during a migration, my instinct is to look past the immediate ask and deliver something with lasting value.
+
+Principle to improve: Stronger together
+
+I already contribute to the team through shared tools, documentation, and answering questions in team meetings and the #support-us Slack channel. But I could be more intentional about it — making myself more consistently available as a resource, contributing more structured knowledge (Confluence articles, presentations), and looking for opportunities to help teammates work through problems rather than just sharing finished solutions.
+
+
+========================================
+
+PROMPT 3: GOALS FOR THE YEAR AHEAD
+
+1. Publish Confluence documentation consistently and proactively
+
+I have two articles already in progress — the ArgoCD Sync Hook procedure from https://redislabs.zendesk.com/agent/tickets/153806 and the REAADB CNI/HostPrefix recovery procedure from https://redislabs.zendesk.com/agent/tickets/154276. Beyond completing these, I want to establish a regular habit of converting complex case resolutions into reusable team documentation. The goal is to turn the knowledge I build on individual tickets into shared assets that reduce ramp-up time for the team and prevent repeated investigation of the same issues.
+
+2. Continue building and improving internal tools
+
+The ACL Builder (https://github.com/markotrapani/redis-acl-builder) and GT Logs Helper (https://github.com/markotrapani/gtlogs-link-generator) have both seen real adoption. I want to keep iterating on these based on team feedback and identify new opportunities where a purpose-built tool can save the team time or deflect cases. This includes staying current with Redis 8 changes that affect the ACL Builder and continuing to ship GT Logs updates as workflows evolve.
+
+3. Assist and shadow Solutions Architects on customer PoCs
+
+Several of my most impactful cases this year involved PoC-style work — designing solutions, lab-testing configurations, and advising customers on architecture. I want to formalize this by shadowing and assisting SAs on customer PoCs, which would deepen my understanding of pre-sales use cases and strengthen the bridge between Support and Solutions Architecture. This directly builds on the Avaya work where I was already providing PoC development and architectural advising alongside case resolution.
