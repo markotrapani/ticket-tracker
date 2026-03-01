@@ -9,7 +9,7 @@ from werkzeug.utils import secure_filename
 
 from backend.config import Config, ensure_dirs, ATTACHMENTS_DIR
 from backend.models.database import db
-from backend.models.ticket import Ticket, TicketTag, TicketNote, ScoreHistory
+from backend.models.ticket import Ticket, TicketTag, TicketNote, TicketJiraIssue, ScoreHistory
 from backend.services import scoring, stats
 from backend.services.csv_importer import import_csv
 from backend.services.pdf_parser import parse_zendesk_pdf, synthesize_investigation, build_summary
@@ -34,10 +34,12 @@ def create_app(config=None):
 
 
 def _init_fts(app):
-    """Initialize FTS5 virtual table for full-text search.
+    """Initialize FTS5 virtual tables for full-text search.
 
     Always drops and recreates to handle schema changes (virtual tables
-    can't be altered in SQLite).
+    can't be altered in SQLite).  Two tables:
+      - tickets_fts: indexes Ticket table columns (STAR fields, metadata)
+      - notes_fts:   indexes TicketNote content (conversation threads)
     """
     with db.engine.connect() as conn:
         conn.execute(db.text("DROP TABLE IF EXISTS tickets_fts"))
@@ -49,13 +51,36 @@ def _init_fts(app):
                 content_rowid='id'
             )
         """))
+        # notes_fts: only create if missing (rebuild_fts handles repopulation)
+        exists = conn.execute(db.text(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='notes_fts'"
+        )).scalar()
+        if not exists:
+            conn.execute(db.text("""
+                CREATE VIRTUAL TABLE notes_fts USING fts5(
+                    ticket_id UNINDEXED, note_content
+                )
+            """))
         conn.commit()
 
 
 def rebuild_fts():
-    """Rebuild FTS index from current ticket data."""
+    """Rebuild FTS indexes from current ticket and note data.
+
+    Drops and recreates FTS tables to avoid corruption issues, then
+    repopulates from the source tables.
+    """
     with db.engine.connect() as conn:
-        conn.execute(db.text("DELETE FROM tickets_fts"))
+        # Drop and recreate to avoid stale/corrupt FTS state
+        conn.execute(db.text("DROP TABLE IF EXISTS tickets_fts"))
+        conn.execute(db.text("""
+            CREATE VIRTUAL TABLE tickets_fts USING fts5(
+                zendesk_id, subject, customer_name, description,
+                root_cause, steps_taken, resolution, interview_notes, category,
+                content='tickets',
+                content_rowid='id'
+            )
+        """))
         conn.execute(db.text("""
             INSERT INTO tickets_fts(rowid, zendesk_id, subject, customer_name,
                 description, root_cause, steps_taken, resolution, interview_notes, category)
@@ -64,6 +89,19 @@ def rebuild_fts():
                 COALESCE(steps_taken,''), COALESCE(resolution,''),
                 COALESCE(interview_notes,''), COALESCE(category,'')
             FROM tickets
+        """))
+        # notes_fts: standalone FTS5 table (stores its own content)
+        # ticket_id is UNINDEXED (stored for joins but not searched)
+        conn.execute(db.text("DROP TABLE IF EXISTS notes_fts"))
+        conn.execute(db.text("""
+            CREATE VIRTUAL TABLE notes_fts USING fts5(
+                ticket_id UNINDEXED, note_content
+            )
+        """))
+        conn.execute(db.text("""
+            INSERT INTO notes_fts(ticket_id, note_content)
+            SELECT ticket_id, COALESCE(content, '')
+            FROM ticket_notes
         """))
         conn.commit()
 
@@ -749,27 +787,38 @@ def register_routes(app):
         if not q:
             return jsonify({'tickets': [], 'total': 0})
 
-        # Try FTS5 first, fall back to LIKE
+        # Try FTS5 first (tickets + notes), fall back to LIKE
         try:
+            # Search ticket fields
             fts_query = db.text("""
-                SELECT t.* FROM tickets t
+                SELECT t.id FROM tickets t
                 JOIN tickets_fts fts ON t.id = fts.rowid
                 WHERE tickets_fts MATCH :query
-                ORDER BY t.final_score DESC NULLS LAST
-                LIMIT 50
             """)
-            result_rows = db.session.execute(fts_query, {'query': q}).fetchall()
-            if result_rows:
-                ids = [r.id for r in result_rows]
-                results = Ticket.query.filter(Ticket.id.in_(ids)).order_by(
+            ticket_rows = db.session.execute(fts_query, {'query': q}).fetchall()
+            ticket_ids = {r.id for r in ticket_rows}
+
+            # Search conversation notes
+            notes_query = db.text("""
+                SELECT DISTINCT ticket_id FROM notes_fts
+                WHERE notes_fts MATCH :query
+            """)
+            note_rows = db.session.execute(notes_query, {'query': q}).fetchall()
+            ticket_ids.update(r.ticket_id for r in note_rows)
+
+            if ticket_ids:
+                results = Ticket.query.filter(Ticket.id.in_(ticket_ids)).order_by(
                     Ticket.final_score.desc().nullslast()
-                ).all()
+                ).limit(50).all()
                 return jsonify({'tickets': [t.to_dict() for t in results], 'total': len(results)})
         except Exception:
             pass  # FTS not populated yet or query syntax issue
 
-        # LIKE fallback
+        # LIKE fallback (includes notes)
         like = f'%{q}%'
+        note_ticket_ids = db.session.query(TicketNote.ticket_id).filter(
+            TicketNote.content.ilike(like)
+        ).distinct().subquery()
         results = Ticket.query.filter(
             db.or_(
                 Ticket.zendesk_id.like(like),
@@ -780,6 +829,7 @@ def register_routes(app):
                 Ticket.resolution.like(like),
                 Ticket.category.like(like),
                 Ticket.interview_notes.like(like),
+                Ticket.id.in_(note_ticket_ids),
             )
         ).order_by(Ticket.final_score.desc().nullslast()).limit(50).all()
 

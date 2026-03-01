@@ -118,6 +118,10 @@ automation and 20+ tools for Claude Code integration:
 
 ## Future Ideas
 
+- [ ] RAG chat: search conversation notes (TicketNote table) in
+  addition to STAR fields — enables queries like "which tickets are
+  for eCommerce companies?" by searching customer signatures, email
+  domains, DB names, and full conversation content
 - [ ] ZenDesk API integration (if API access becomes available)
 - [ ] CSAT/survey feedback import (not available in print PDFs)
 - [ ] Ticket relationship graph visualization

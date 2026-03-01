@@ -33,6 +33,12 @@ class Ticket(db.Model):
     is_escalation = db.Column(db.Boolean, default=False)
     involved_custom_scripts = db.Column(db.Boolean, default=False)
 
+    # Organization / company (parsed from conversation)
+    organization = db.Column(db.String(300), nullable=True)
+
+    # First response time (hours from creation to first agent reply)
+    first_response_hours = db.Column(db.Float, nullable=True)
+
     # Zendesk infrastructure metadata
     product_line = db.Column(db.String(100), nullable=True)       # e.g. "Pro (RV)", "Essentials"
     additional_products = db.Column(db.String(200), nullable=True) # e.g. "RedisSearch, RedisJSON"
@@ -68,6 +74,7 @@ class Ticket(db.Model):
     tags = db.relationship('TicketTag', backref='ticket', cascade='all, delete-orphan', lazy='dynamic')
     notes = db.relationship('TicketNote', backref='ticket', cascade='all, delete-orphan',
                             lazy='dynamic', order_by='TicketNote.created_at.desc()')
+    jira_issues = db.relationship('TicketJiraIssue', backref='ticket', cascade='all, delete-orphan', lazy='dynamic')
     score_history = db.relationship('ScoreHistory', backref='ticket', cascade='all, delete-orphan', lazy='dynamic')
 
     @property
@@ -79,6 +86,10 @@ class Ticket(db.Model):
     @property
     def tag_list(self):
         return [t.tag for t in self.tags]
+
+    @property
+    def jira_issue_list(self):
+        return [j.jira_id for j in self.jira_issues]
 
     def to_dict(self):
         return {
@@ -106,6 +117,8 @@ class Ticket(db.Model):
             'is_production_outage': self.is_production_outage,
             'is_escalation': self.is_escalation,
             'involved_custom_scripts': self.involved_custom_scripts,
+            'organization': self.organization,
+            'first_response_hours': self.first_response_hours,
             'product_line': self.product_line,
             'additional_products': self.additional_products,
             'jira_ticket_ids': self.jira_ticket_ids,
@@ -126,9 +139,23 @@ class Ticket(db.Model):
             'interview_notes': self.interview_notes,
             'skills_demonstrated': self.skills_demonstrated,
             'tags': self.tag_list,
+            'jira_issues_parsed': self.jira_issue_list,
             'imported_at': self.imported_at.isoformat() if self.imported_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class TicketJiraIssue(db.Model):
+    """Structured Jira issue references parsed from STAR analysis fields."""
+    __tablename__ = 'ticket_jira_issues'
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey('tickets.id'), nullable=False)
+    jira_id = db.Column(db.String(30), nullable=False, index=True)
+    source_field = db.Column(db.String(30))  # which field it was found in
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('ticket_id', 'jira_id'),)
 
 
 class TicketTag(db.Model):

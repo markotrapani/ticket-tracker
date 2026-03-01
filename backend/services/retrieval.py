@@ -8,7 +8,7 @@ import re
 from datetime import date, timedelta
 
 from backend.models.database import db
-from backend.models.ticket import Ticket
+from backend.models.ticket import Ticket, TicketNote
 
 # ── Query Parsing ──────────────────────────────────────────────
 
@@ -287,11 +287,12 @@ def retrieve_tickets(parsed_query):
     sort_by_score = parsed_query['sort_by_score']
     sort_score_asc = parsed_query.get('sort_score_asc', False)
 
-    # Try FTS5 first if we have keywords
+    # Try FTS5 first if we have keywords (tickets + conversation notes)
     tickets = []
     if keywords:
         fts_term = ' OR '.join(keywords)
         try:
+            # Search ticket fields
             fts_query = db.text("""
                 SELECT t.id FROM tickets t
                 JOIN tickets_fts fts ON t.id = fts.rowid
@@ -299,14 +300,26 @@ def retrieve_tickets(parsed_query):
                 ORDER BY rank
             """)
             rows = db.session.execute(fts_query, {'query': fts_term}).fetchall()
-            if rows:
-                ids = [r.id for r in rows]
+            ids = {r.id for r in rows}
+
+            # Also search conversation notes
+            notes_query = db.text("""
+                SELECT DISTINCT ticket_id FROM notes_fts
+                WHERE notes_fts MATCH :query
+            """)
+            note_rows = db.session.execute(notes_query, {'query': fts_term}).fetchall()
+            ids.update(r.ticket_id for r in note_rows)
+
+            if ids:
                 tickets = Ticket.query.filter(Ticket.id.in_(ids)).all()
         except Exception:
             pass
 
-        # LIKE fallback if FTS didn't work
+        # LIKE fallback if FTS didn't work (includes notes)
         if not tickets:
+            note_ticket_ids = db.session.query(TicketNote.ticket_id).filter(
+                db.or_(*[TicketNote.content.ilike(f'%{kw}%') for kw in keywords])
+            ).distinct().subquery()
             conditions = []
             for kw in keywords:
                 like = f'%{kw}%'
@@ -318,6 +331,7 @@ def retrieve_tickets(parsed_query):
                     Ticket.resolution.ilike(like),
                     Ticket.description.ilike(like),
                     Ticket.category.ilike(like),
+                    Ticket.id.in_(note_ticket_ids),
                 ))
             tickets = Ticket.query.filter(db.and_(*conditions)).all()
     else:

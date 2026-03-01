@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.app import create_app
 from backend.models.database import db
-from backend.models.ticket import Ticket, TicketTag, TicketNote
+from backend.models.ticket import Ticket, TicketTag, TicketNote, TicketJiraIssue
 from backend.services.csv_importer import import_csv as do_import_csv
 from backend.services import scoring, stats
 
@@ -152,9 +152,12 @@ def cmd_list(status, min_score, starred, category, limit, sort):
 @click.argument('query')
 @click.option('--limit', '-n', default=20)
 def cmd_search(query, limit):
-    """Search tickets by keyword."""
+    """Search tickets by keyword (searches STAR fields + conversation notes)."""
     with app.app_context():
         like = f'%{query}%'
+        note_ticket_ids = db.session.query(TicketNote.ticket_id).filter(
+            TicketNote.content.ilike(like)
+        ).distinct().subquery()
         results = Ticket.query.filter(
             db.or_(
                 Ticket.zendesk_id.like(like),
@@ -165,6 +168,7 @@ def cmd_search(query, limit):
                 Ticket.steps_taken.like(like),
                 Ticket.resolution.like(like),
                 Ticket.category.like(like),
+                Ticket.id.in_(note_ticket_ids),
             )
         ).order_by(Ticket.final_score.desc().nullslast()).limit(limit).all()
 
@@ -359,6 +363,221 @@ def cmd_rescore():
             scoring.score_ticket(ticket)
         db.session.commit()
         click.echo(f"Rescored {len(tickets)} tickets.")
+
+
+@cli.command('backfill')
+@click.option('--jira/--no-jira', default=True, help='Parse Jira IDs from STAR fields')
+@click.option('--escalation/--no-escalation', default=True, help='Detect escalation patterns')
+@click.option('--org/--no-org', default=True, help='Parse organization names')
+@click.option('--scripts/--no-scripts', default=True, help='Detect custom script involvement')
+@click.option('--response-time/--no-response-time', default=True, help='Parse first response time')
+@click.option('--fts/--no-fts', default=True, help='Rebuild FTS index (incl. notes)')
+def cmd_backfill(jira, escalation, org, scripts, response_time, fts):
+    """Backfill derived fields from existing ticket data.
+
+    Parses STAR fields and conversation notes to populate:
+    - Jira issue references (ticket_jira_issues table)
+    - Escalation flag (is_escalation)
+    - Organization name (organization)
+    - Custom scripts flag (involved_custom_scripts)
+    - First response time (first_response_hours)
+    - FTS index rebuild (including notes_fts)
+    """
+    import re
+    from datetime import datetime as dt
+    from dateutil import parser as dateutil_parser
+    from backend.app import rebuild_fts
+
+    with app.app_context():
+        tickets = Ticket.query.all()
+        total = len(tickets)
+
+        jira_count = 0
+        escalation_count = 0
+        org_count = 0
+        scripts_count = 0
+        response_count = 0
+
+        # Jira ID pattern: RED-NNNNN or similar project keys
+        jira_pattern = re.compile(r'\b(RED-\d{4,6})\b', re.IGNORECASE)
+
+        # Escalation indicators in conversation text
+        escalation_markers = [
+            '@l3_to_review', '@l3_review', 'l3_to_review', 'l3_review_done',
+            'moving to l3', 'escalat', 'r&d', 'engineering team',
+            'filed a bug', 'filed a jira', 'opened a jira',
+        ]
+
+        # Script/tool indicators in STAR fields
+        script_markers = [
+            'script', 'wrote a', 'built a', 'developed a', 'created a tool',
+            'custom tool', '.py', '.sh', 'automation', 'wrote custom',
+            'built custom', 'python script', 'bash script', 'shell script',
+        ]
+
+        # Bot/automated authors to skip when finding first agent reply
+        bot_authors = {
+            'redis support bot agent', 'analyzer bot', 'pagerduty',
+            'redisscope bot',
+        }
+
+        # Organization patterns from Zendesk bot messages
+        # Match "Account Name: Bankinter" or "Organization: Chime" on its own line
+        org_patterns = [
+            re.compile(r'^Account\s+Name\s*:\s*(.+?)$', re.IGNORECASE | re.MULTILINE),
+            re.compile(r'^Organization\s+Name\s*:\s*(.+?)$', re.IGNORECASE | re.MULTILINE),
+            re.compile(r'^Organization\s*:\s*(.+?)$', re.IGNORECASE | re.MULTILINE),
+        ]
+        # Values that are clearly not org names
+        org_junk = {'', '-', 'n/a', 'none', 'auto-created', 'unknown'}
+
+        for i, ticket in enumerate(tickets, 1):
+            if i % 100 == 0:
+                click.echo(f"  Processing {i}/{total}...")
+
+            # --- Jira IDs ---
+            if jira:
+                found_jiras = set()
+                for field_name in ('summary', 'root_cause', 'steps_taken', 'resolution'):
+                    text = getattr(ticket, field_name, '') or ''
+                    for match in jira_pattern.finditer(text):
+                        jid = match.group(1).upper()
+                        if jid not in found_jiras:
+                            found_jiras.add(jid)
+                            existing = TicketJiraIssue.query.filter_by(
+                                ticket_id=ticket.id, jira_id=jid
+                            ).first()
+                            if not existing:
+                                db.session.add(TicketJiraIssue(
+                                    ticket_id=ticket.id,
+                                    jira_id=jid,
+                                    source_field=field_name,
+                                ))
+                                jira_count += 1
+
+                # Also check conversation notes for Jira IDs
+                for note in ticket.notes.filter_by(note_type='conversation'):
+                    for match in jira_pattern.finditer(note.content or ''):
+                        jid = match.group(1).upper()
+                        if jid not in found_jiras:
+                            found_jiras.add(jid)
+                            existing = TicketJiraIssue.query.filter_by(
+                                ticket_id=ticket.id, jira_id=jid
+                            ).first()
+                            if not existing:
+                                db.session.add(TicketJiraIssue(
+                                    ticket_id=ticket.id,
+                                    jira_id=jid,
+                                    source_field='conversation',
+                                ))
+                                jira_count += 1
+
+            # --- Escalation Detection ---
+            if escalation and not ticket.is_escalation:
+                # Check STAR fields
+                star_text = ' '.join(filter(None, [
+                    ticket.summary, ticket.root_cause,
+                    ticket.steps_taken, ticket.resolution,
+                ])).lower()
+                is_esc = any(marker in star_text for marker in escalation_markers)
+
+                # Check conversation notes
+                if not is_esc:
+                    for note in ticket.notes.filter_by(note_type='conversation'):
+                        note_lower = (note.content or '').lower()
+                        if any(marker in note_lower for marker in escalation_markers):
+                            is_esc = True
+                            break
+
+                # Also flag if ticket has Jira IDs (indicates engineering involvement)
+                if not is_esc and ticket.jira_ticket_ids:
+                    is_esc = True
+
+                if is_esc:
+                    ticket.is_escalation = True
+                    escalation_count += 1
+
+            # --- Organization Detection ---
+            if org and not ticket.organization:
+                for note in ticket.notes.filter_by(note_type='conversation'):
+                    note_text = note.content or ''
+                    author = (note.author or '').lower()
+                    if author in bot_authors or 'analyzer bot' in author:
+                        for pattern in org_patterns:
+                            m = pattern.search(note_text)
+                            if m:
+                                org_name = m.group(1).strip()
+                                # Filter out junk, IDs, and fragments
+                                if (org_name.lower() not in org_junk
+                                        and len(org_name) > 2
+                                        and len(org_name) < 100
+                                        and not org_name.startswith(('Auto-created', 'SM'))
+                                        and '|' not in org_name):
+                                    ticket.organization = org_name
+                                    org_count += 1
+                                    break
+                    if ticket.organization:
+                        break
+
+            # --- Custom Script Detection ---
+            if scripts and not ticket.involved_custom_scripts:
+                star_text = ' '.join(filter(None, [
+                    ticket.summary, ticket.root_cause,
+                    ticket.steps_taken, ticket.resolution,
+                ])).lower()
+                if any(marker in star_text for marker in script_markers):
+                    ticket.involved_custom_scripts = True
+                    scripts_count += 1
+
+            # --- First Response Time ---
+            if response_time and ticket.first_response_hours is None:
+                # Find first public, non-bot comment by a Redis agent
+                conversation_notes = ticket.notes.filter_by(
+                    note_type='conversation', is_internal=False
+                ).order_by(TicketNote.created_at.asc()).all()
+
+                for note in conversation_notes:
+                    author = (note.author or '').lower()
+                    if author in bot_authors:
+                        continue
+                    # Skip customer's own messages (first comment is usually theirs)
+                    if note.content and 'this is an automated response' in note.content.lower():
+                        continue
+                    # This is the first real agent reply
+                    if note.created_at and ticket.created_date:
+                        created_dt = dt.combine(ticket.created_date, dt.min.time())
+                        delta = note.created_at - created_dt
+                        hours = delta.total_seconds() / 3600
+                        if hours >= 0:
+                            ticket.first_response_hours = round(hours, 1)
+                            response_count += 1
+                    break
+
+        db.session.commit()
+
+        # Rebuild FTS (including notes)
+        if fts:
+            click.echo("  Rebuilding FTS index (tickets + notes)...")
+            rebuild_fts()
+
+        click.echo(f"\nBackfill complete ({total} tickets processed):")
+        if jira:
+            total_jira = TicketJiraIssue.query.count()
+            click.echo(f"  Jira issues:       {jira_count} new ({total_jira} total)")
+        if escalation:
+            esc_total = Ticket.query.filter_by(is_escalation=True).count()
+            click.echo(f"  Escalations:       {escalation_count} new ({esc_total} total)")
+        if org:
+            org_total = Ticket.query.filter(Ticket.organization.isnot(None)).count()
+            click.echo(f"  Organizations:     {org_count} new ({org_total} total)")
+        if scripts:
+            scr_total = Ticket.query.filter_by(involved_custom_scripts=True).count()
+            click.echo(f"  Custom scripts:    {scripts_count} new ({scr_total} total)")
+        if response_time:
+            rt_total = Ticket.query.filter(Ticket.first_response_hours.isnot(None)).count()
+            click.echo(f"  Response times:    {response_count} new ({rt_total} total)")
+        if fts:
+            click.echo(f"  FTS index:         rebuilt (tickets + notes)")
 
 
 if __name__ == '__main__':
