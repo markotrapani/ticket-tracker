@@ -13,3 +13,8 @@ sample_data/*
 !sample_data/EXAMPLE_*
 *.csv
 !**/EXAMPLE_*.csv
+
+# Personal docs (interview prep, self-assessments)
+interview-prep-*.md
+self-assessment-*.md
+self-assessment-*.txt
