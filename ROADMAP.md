@@ -104,7 +104,41 @@ automation and 20+ tools for Claude Code integration:
 - [x] Zendesk metadata extraction (JIRA IDs, subscription IDs,
   BDB IDs, endpoints, additional products)
 
-## Phase 9: Polish (Partial)
+## Phase 9: Derived Fields & Deep Search (Complete)
+
+- [x] FTS5 extended to search TicketNote conversation content
+  (standalone `notes_fts` table with 32K+ rows)
+- [x] Structured Jira issue references (`ticket_jira_issues` table,
+  257 refs across 190 tickets parsed from STAR fields + notes)
+- [x] Escalation auto-detection from conversation keywords and Jira
+  references (358 tickets flagged, 39%)
+- [x] Custom script/tool involvement detection from STAR fields
+  (207 tickets flagged, 23%)
+- [x] First response time calculation from conversation timestamps
+  (886 of 898 tickets)
+- [x] Organization field on Ticket model (schema ready, parser WIP)
+- [x] `backfill` CLI command with 6 toggleable options:
+  `--jira`, `--escalation`, `--org`, `--scripts`, `--response-time`,
+  `--fts`
+- [x] All search paths (FTS5, LIKE fallback, API, CLI, retrieval
+  service) now query both ticket fields and conversation notes
+
+## Phase 10: Test Suite (Complete)
+
+- [x] pytest infrastructure with in-memory SQLite (100 tests, <0.5s)
+- [x] Model tests: Ticket CRUD, properties, serialization, uniqueness,
+  cascade deletes for TicketTag/TicketNote/TicketJiraIssue
+- [x] Backfill tests: Jira regex parsing, escalation markers, script
+  detection, first response time calculation
+- [x] Enrichment tests: outage detection (strong/weak phrases, bot
+  exclusion, boilerplate filtering), enrich + reset workflows
+- [x] Scoring tests: MetadataScorer, ContentScorer, final score
+  calculation, score_ticket pipeline
+- [x] Retrieval tests: query parsing (categories, booleans, severity,
+  year, limits, sorting, follow-ups), FTS5 search across tickets +
+  notes, LLM/chat formatting
+
+## Phase 11: Polish (Partial)
 
 - [x] Loading spinner CSS animation
 - [x] Print styles (hide nav, buttons, forms)
@@ -114,16 +148,12 @@ automation and 20+ tools for Claude Code integration:
 - [ ] Mobile-responsive layout improvements
 - [ ] Keyboard shortcuts for navigation
 - [ ] Undo support for edits
-- [ ] Unit tests for scoring, CSV import, PDF parser
 
 ## Future Ideas
 
-- [ ] RAG chat: search conversation notes (TicketNote table) in
-  addition to STAR fields — enables queries like "which tickets are
-  for eCommerce companies?" by searching customer signatures, email
-  domains, DB names, and full conversation content
+- [ ] Organization parsing from bot messages (schema exists, regex
+  needs tuning to match actual Zendesk bot message format)
 - [ ] ZenDesk API integration (if API access becomes available)
 - [ ] CSAT/survey feedback import (not available in print PDFs)
 - [ ] Ticket relationship graph visualization
-- [ ] Auto-detect escalation patterns from cross-ticket references
 - [ ] Cloud deployment (Docker, fly.io, etc.)
