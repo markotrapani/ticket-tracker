@@ -95,6 +95,17 @@ BOOLEAN_SIGNALS = {
     'created a script': {'involved_custom_scripts': True},
 }
 
+ENGAGEMENT_MAP = {
+    'poc': 'poc', 'proof of concept': 'poc', 'pov': 'poc', 'proof of value': 'poc',
+    'evaluation': 'evaluation', 'benchmark': 'evaluation', 'load test': 'evaluation',
+    'migration': 'migration', 'migrating': 'migration',
+    'trial': 'trial',
+    'demo': 'demo', 'demonstration': 'demo',
+    'competitive': 'competitive', 'competitive eval': 'competitive',
+    'pilot': 'pilot',
+    'production': 'production',
+}
+
 SEVERITY_MAP = {
     'p1': 'Critical', 'p2': 'Urgent', 'p3': 'High', 'p4': 'Normal',
     'severity 1': 'Critical', 'severity 2': 'Urgent',
@@ -165,6 +176,13 @@ def parse_query(question):
         if phrase in q:
             filters.update(bool_filters)
             q = q.replace(phrase, ' ')
+
+    # Check engagement type
+    for term, eng in sorted(ENGAGEMENT_MAP.items(), key=lambda x: -len(x[0])):
+        if term in q:
+            filters['engagement_type'] = eng
+            q = q.replace(term, ' ')
+            break
 
     # Check severity — treat as keywords (severity field is unreliable: 858/898 are "Normal")
     for term, sev in SEVERITY_MAP.items():
@@ -359,6 +377,9 @@ def retrieve_tickets(parsed_query):
                 text = ' '.join(filter(None, [t.steps_taken, t.resolution, t.summary])).lower()
                 if 'script' not in text:
                     continue
+        if 'engagement_type' in filters:
+            if t.engagement_type != filters['engagement_type']:
+                continue
         if 'is_starred' in filters:
             if not t.is_starred:
                 continue
@@ -399,7 +420,7 @@ def format_for_llm(tickets, question):
     for t in tickets:
         lines.append(f"=== TICKET #{t.zendesk_id} (Score: {t.final_score or 0:.0f}) ===")
         lines.append(f"Subject: {t.subject or 'N/A'}")
-        lines.append(f"Category: {t.category or 'N/A'} | Product: {t.product_line or 'N/A'}")
+        lines.append(f"Category: {t.category or 'N/A'} | Engagement: {t.engagement_type or 'N/A'} | Product: {t.product_line or 'N/A'}")
         lines.append(f"Priority: {t.priority or 'N/A'} | Severity: {t.severity or 'N/A'}")
         lines.append(f"Customer: {t.customer_name or 'N/A'}")
         lines.append(f"Status: {t.status} | Created: {t.created_date} | "
@@ -435,6 +456,7 @@ def format_for_chat(tickets):
             'zendesk_id': t.zendesk_id,
             'subject': t.subject,
             'category': t.category,
+            'engagement_type': t.engagement_type,
             'product_line': t.product_line,
             'severity': t.severity,
             'final_score': t.final_score or 0,

@@ -46,7 +46,8 @@ def _init_fts(app):
         conn.execute(db.text("""
             CREATE VIRTUAL TABLE tickets_fts USING fts5(
                 zendesk_id, subject, customer_name, description,
-                root_cause, steps_taken, resolution, interview_notes, category,
+                root_cause, steps_taken, resolution, interview_notes,
+                category, engagement_type,
                 content='tickets',
                 content_rowid='id'
             )
@@ -76,18 +77,21 @@ def rebuild_fts():
         conn.execute(db.text("""
             CREATE VIRTUAL TABLE tickets_fts USING fts5(
                 zendesk_id, subject, customer_name, description,
-                root_cause, steps_taken, resolution, interview_notes, category,
+                root_cause, steps_taken, resolution, interview_notes,
+                category, engagement_type,
                 content='tickets',
                 content_rowid='id'
             )
         """))
         conn.execute(db.text("""
             INSERT INTO tickets_fts(rowid, zendesk_id, subject, customer_name,
-                description, root_cause, steps_taken, resolution, interview_notes, category)
+                description, root_cause, steps_taken, resolution, interview_notes,
+                category, engagement_type)
             SELECT id, zendesk_id, COALESCE(subject,''), COALESCE(customer_name,''),
                 COALESCE(description,''), COALESCE(root_cause,''),
                 COALESCE(steps_taken,''), COALESCE(resolution,''),
-                COALESCE(interview_notes,''), COALESCE(category,'')
+                COALESCE(interview_notes,''), COALESCE(category,''),
+                COALESCE(engagement_type,'')
             FROM tickets
         """))
         # notes_fts: standalone FTS5 table (stores its own content)
@@ -211,6 +215,14 @@ def register_routes(app):
         if category:
             query = query.filter_by(category=category)
 
+        engagement_type = request.args.get('engagement_type')
+        if engagement_type and engagement_type != 'all':
+            query = query.filter_by(engagement_type=engagement_type)
+
+        tag_filter = request.args.get('tag')
+        if tag_filter:
+            query = query.filter(Ticket.tags.any(TicketTag.tag == tag_filter.strip().lower()))
+
         enrichment = request.args.get('enrichment')
         if enrichment and enrichment != 'all':
             query = query.filter_by(enrichment_level=enrichment)
@@ -257,8 +269,8 @@ def register_routes(app):
         data = request.get_json()
 
         updatable = ['subject', 'customer_name', 'summary', 'description', 'root_cause',
-                     'steps_taken', 'resolution', 'category', 'product_area',
-                     'priority', 'severity',
+                     'steps_taken', 'resolution', 'category', 'engagement_type',
+                     'product_area', 'priority', 'severity',
                      'is_production_outage', 'is_escalation', 'involved_custom_scripts',
                      'interview_notes', 'skills_demonstrated',
                      'product_line', 'additional_products', 'jira_ticket_ids',

@@ -77,6 +77,8 @@ def cmd_show(zendesk_id):
             click.echo(f"Customer:    {ticket.customer_name}")
         if ticket.category:
             click.echo(f"Category:    {ticket.category}")
+        if ticket.engagement_type:
+            click.echo(f"Engagement:  {ticket.engagement_type}")
         if ticket.product_area:
             click.echo(f"Product:     {ticket.product_area}")
         if ticket.severity:
@@ -105,9 +107,10 @@ def cmd_show(zendesk_id):
 @click.option('--min-score', type=float, help='Minimum significance score')
 @click.option('--starred', is_flag=True, help='Show only starred tickets')
 @click.option('--category', help='Filter by category')
+@click.option('--engagement-type', 'engagement_type', help='Filter by engagement type (poc, evaluation, migration, etc.)')
 @click.option('--limit', '-n', default=20)
 @click.option('--sort', type=click.Choice(['score', 'date', 'resolution_time']), default='score')
-def cmd_list(status, min_score, starred, category, limit, sort):
+def cmd_list(status, min_score, starred, category, engagement_type, limit, sort):
     """List tickets with filters."""
     with app.app_context():
         query = Ticket.query
@@ -120,6 +123,8 @@ def cmd_list(status, min_score, starred, category, limit, sort):
             query = query.filter_by(is_starred=True)
         if category:
             query = query.filter_by(category=category)
+        if engagement_type:
+            query = query.filter_by(engagement_type=engagement_type)
 
         if sort == 'score':
             query = query.order_by(Ticket.final_score.desc().nullslast())
@@ -150,15 +155,14 @@ def cmd_list(status, min_score, starred, category, limit, sort):
 
 @cli.command('search')
 @click.argument('query')
+@click.option('--engagement-type', 'engagement_type', help='Filter results by engagement type')
+@click.option('--include-notes/--no-notes', default=True, help='Search conversation notes too')
 @click.option('--limit', '-n', default=20)
-def cmd_search(query, limit):
+def cmd_search(query, engagement_type, include_notes, limit):
     """Search tickets by keyword (searches STAR fields + conversation notes)."""
     with app.app_context():
         like = f'%{query}%'
-        note_ticket_ids = db.session.query(TicketNote.ticket_id).filter(
-            TicketNote.content.ilike(like)
-        ).distinct().subquery()
-        results = Ticket.query.filter(
+        filters = [
             db.or_(
                 Ticket.zendesk_id.like(like),
                 Ticket.subject.like(like),
@@ -168,21 +172,43 @@ def cmd_search(query, limit):
                 Ticket.steps_taken.like(like),
                 Ticket.resolution.like(like),
                 Ticket.category.like(like),
-                Ticket.id.in_(note_ticket_ids),
+                Ticket.engagement_type.like(like),
             )
-        ).order_by(Ticket.final_score.desc().nullslast()).limit(limit).all()
+        ]
+        if include_notes:
+            note_ticket_ids = db.session.query(TicketNote.ticket_id).filter(
+                TicketNote.content.ilike(like)
+            ).distinct().subquery()
+            filters = [db.or_(
+                Ticket.zendesk_id.like(like),
+                Ticket.subject.like(like),
+                Ticket.customer_name.like(like),
+                Ticket.description.like(like),
+                Ticket.root_cause.like(like),
+                Ticket.steps_taken.like(like),
+                Ticket.resolution.like(like),
+                Ticket.category.like(like),
+                Ticket.engagement_type.like(like),
+                Ticket.id.in_(note_ticket_ids),
+            )]
+
+        base_query = Ticket.query.filter(*filters)
+        if engagement_type:
+            base_query = base_query.filter_by(engagement_type=engagement_type)
+        results = base_query.order_by(Ticket.final_score.desc().nullslast()).limit(limit).all()
 
         if not results:
             click.echo(f"No tickets matching '{query}'")
             return
 
         click.echo(f"\nSearch results for '{query}' ({len(results)} found):\n")
-        click.echo(f"{'ID':<8} {'Score':>5}  {'Status':<8} {'Created':<12} {'Subject'}")
-        click.echo('-' * 70)
+        click.echo(f"{'ID':<8} {'Score':>5}  {'Status':<8} {'Engagement':<12} {'Created':<12} {'Subject'}")
+        click.echo('-' * 85)
         for t in results:
-            subject = (t.subject or '')[:80]
+            subject = (t.subject or '')[:60]
             score = f"{t.final_score:.0f}" if t.final_score else "-"
-            click.echo(f"{t.zendesk_id:<8} {score:>5}  {t.status:<8} {str(t.created_date):<12} {subject}")
+            eng = t.engagement_type or ''
+            click.echo(f"{t.zendesk_id:<8} {score:>5}  {t.status:<8} {eng:<12} {str(t.created_date):<12} {subject}")
 
 
 @cli.command('stats')
@@ -371,8 +397,9 @@ def cmd_rescore():
 @click.option('--org/--no-org', default=True, help='Parse organization names')
 @click.option('--scripts/--no-scripts', default=True, help='Detect custom script involvement')
 @click.option('--response-time/--no-response-time', default=True, help='Parse first response time')
+@click.option('--engagement/--no-engagement', default=True, help='Auto-detect engagement type (poc, eval, etc.)')
 @click.option('--fts/--no-fts', default=True, help='Rebuild FTS index (incl. notes)')
-def cmd_backfill(jira, escalation, org, scripts, response_time, fts):
+def cmd_backfill(jira, escalation, org, scripts, response_time, engagement, fts):
     """Backfill derived fields from existing ticket data.
 
     Parses STAR fields and conversation notes to populate:
@@ -381,6 +408,7 @@ def cmd_backfill(jira, escalation, org, scripts, response_time, fts):
     - Organization name (organization)
     - Custom scripts flag (involved_custom_scripts)
     - First response time (first_response_hours)
+    - Engagement type (poc, evaluation, migration, trial, demo, competitive, production)
     - FTS index rebuild (including notes_fts)
     """
     import re
@@ -397,6 +425,7 @@ def cmd_backfill(jira, escalation, org, scripts, response_time, fts):
         org_count = 0
         scripts_count = 0
         response_count = 0
+        engagement_count = 0
 
         # Jira ID pattern: RED-NNNNN or similar project keys
         jira_pattern = re.compile(r'\b(RED-\d{4,6})\b', re.IGNORECASE)
@@ -553,6 +582,80 @@ def cmd_backfill(jira, escalation, org, scripts, response_time, fts):
                             response_count += 1
                     break
 
+            # --- Engagement Type Detection ---
+            if engagement and not ticket.engagement_type:
+                # Combine subject + STAR fields + first few conversation notes
+                subject_lower = (ticket.subject or '').lower()
+                star_text = ' '.join(filter(None, [
+                    ticket.summary, ticket.root_cause,
+                    ticket.steps_taken, ticket.resolution,
+                ])).lower()
+
+                # Gather first 10 conversation note snippets
+                note_snippets = []
+                for note in ticket.notes.filter_by(note_type='conversation').limit(10):
+                    note_snippets.append((note.content or '').lower()[:500])
+                notes_text = ' '.join(note_snippets)
+
+                all_text = subject_lower + ' ' + star_text + ' ' + notes_text
+
+                # Ordered by specificity — first match wins
+                # Competitive evaluation
+                if any(kw in all_text for kw in [
+                    'competitive eval', 'competitive analysis', 'compared to',
+                    'vs elasticache', 'vs memcached', 'vs dragonfly',
+                    'vs keydb', 'alternative to',
+                ]):
+                    ticket.engagement_type = 'competitive'
+                    engagement_count += 1
+                # POC / Proof of Concept
+                elif any(kw in all_text for kw in [
+                    'poc ', ' poc', 'proof of concept', 'proof of value',
+                    'pov ', ' pov',
+                ]) or any(kw in subject_lower for kw in ['poc', 'pov']):
+                    ticket.engagement_type = 'poc'
+                    engagement_count += 1
+                # Evaluation / Benchmarking
+                elif any(kw in all_text for kw in [
+                    'evaluation', 'evaluating', 'benchmark', 'benchmarking',
+                    'load test', 'load-test', 'performance test',
+                    'memtier_benchmark', 'redis-benchmark',
+                ]):
+                    ticket.engagement_type = 'evaluation'
+                    engagement_count += 1
+                # Trial
+                elif any(kw in all_text for kw in [
+                    'trial license', 'trial period', 'trial expir',
+                    'free trial', 'trial account',
+                ]):
+                    ticket.engagement_type = 'trial'
+                    engagement_count += 1
+                # Migration
+                elif any(kw in all_text for kw in [
+                    'migration', 'migrating', 'cutover', 'cut-over',
+                    'migrate from', 'migrate to', 'data migration',
+                ]):
+                    ticket.engagement_type = 'migration'
+                    engagement_count += 1
+                # Demo
+                elif any(kw in all_text for kw in [
+                    'demo environment', 'demo cluster', 'demonstration',
+                    'demo setup', 'sandbox',
+                ]) or 'demo' in subject_lower.split():
+                    ticket.engagement_type = 'demo'
+                    engagement_count += 1
+                # Pilot
+                elif any(kw in all_text for kw in [
+                    'pilot program', 'pilot project', 'pilot phase',
+                    'pilot deployment',
+                ]):
+                    ticket.engagement_type = 'pilot'
+                    engagement_count += 1
+                # Production (default for outage/escalation tickets)
+                elif ticket.is_production_outage or ticket.is_production:
+                    ticket.engagement_type = 'production'
+                    engagement_count += 1
+
         db.session.commit()
 
         # Rebuild FTS (including notes)
@@ -576,6 +679,16 @@ def cmd_backfill(jira, escalation, org, scripts, response_time, fts):
         if response_time:
             rt_total = Ticket.query.filter(Ticket.first_response_hours.isnot(None)).count()
             click.echo(f"  Response times:    {response_count} new ({rt_total} total)")
+        if engagement:
+            eng_total = Ticket.query.filter(Ticket.engagement_type.isnot(None)).count()
+            click.echo(f"  Engagement types:  {engagement_count} new ({eng_total} total)")
+            # Show breakdown
+            from sqlalchemy import func
+            breakdown = db.session.query(
+                Ticket.engagement_type, func.count()
+            ).filter(Ticket.engagement_type.isnot(None)).group_by(Ticket.engagement_type).all()
+            for etype, count in sorted(breakdown, key=lambda x: -x[1]):
+                click.echo(f"    {etype:<15} {count}")
         if fts:
             click.echo(f"  FTS index:         rebuilt (tickets + notes)")
 

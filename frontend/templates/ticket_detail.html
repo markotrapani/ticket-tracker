@@ -129,6 +129,15 @@
                         </datalist>
                     </div>
                     <div class="col-md-4">
+                        <label class="form-label fw-bold">Engagement Type</label>
+                        <select class="form-select form-select-sm editable" data-field="engagement_type">
+                            <option value="">--</option>
+                            {% for et in ['production', 'poc', 'evaluation', 'migration', 'trial', 'demo', 'competitive', 'pilot', 'other'] %}
+                            <option value="{{ et }}" {{ 'selected' if ticket.engagement_type == et else '' }}>{{ et }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
                         <label class="form-label fw-bold">Product Area</label>
                         <input type="text" class="form-control form-control-sm editable" data-field="product_area" value="{{ ticket.product_area or '' }}" list="product-list">
                         <datalist id="product-list">

@@ -25,6 +25,7 @@ class Ticket(db.Model):
 
     # Classification
     category = db.Column(db.String(100), nullable=True)
+    engagement_type = db.Column(db.String(30), nullable=True)  # poc, evaluation, migration, trial, demo, competitive, production, other
     product_area = db.Column(db.String(100), nullable=True)
     priority = db.Column(db.String(20), nullable=True)
     severity = db.Column(db.String(10), nullable=True)
@@ -110,6 +111,7 @@ class Ticket(db.Model):
             'resolution': self.resolution,
             'zendesk_url': self.zendesk_url,
             'category': self.category,
+            'engagement_type': self.engagement_type,
             'product_area': self.product_area,
             'priority': self.priority,
             'severity': self.severity,
