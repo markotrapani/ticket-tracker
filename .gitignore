@@ -18,3 +18,6 @@ sample_data/*
 interview-prep-*.md
 self-assessment-*.md
 self-assessment-*.txt
+
+# Story-mining working dir (raw customer ticket threads — never commit)
+story-backfill/
