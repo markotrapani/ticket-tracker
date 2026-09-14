@@ -117,12 +117,17 @@ def main():
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
-    files = sorted(f for f in os.listdir(args.story_dir)
-                   if f.endswith('.md') and not f.startswith('_'))
+    files = []
+    for root, _dirs, names in os.walk(args.story_dir):
+        for f in names:
+            if f.endswith('.md') and not f.startswith('_'):
+                files.append(os.path.join(root, f))
+    files.sort()
     applied = missing = bad = 0
 
-    for fname in files:
-        with open(os.path.join(args.story_dir, fname), encoding='utf-8') as fh:
+    for path in files:
+        fname = os.path.basename(path)
+        with open(path, encoding='utf-8') as fh:
             text = fh.read()
         s = parse_story(text)
         zid = s['id'] or fname[:-3]
@@ -157,11 +162,11 @@ def main():
 
         cur.execute("""UPDATE tickets SET summary=?, root_cause=?, steps_taken=?,
                        resolution=?, interview_notes=?, enrichment_level='full',
-                       is_starred=COALESCE(?, is_starred), auto_score=?,
-                       content_score=?, final_score=?, updated_at=?
+                       is_starred=COALESCE(?, is_starred), story_strength=?,
+                       auto_score=?, content_score=?, final_score=?, updated_at=?
                        WHERE id=?""",
                     (s['summary'], s['root_cause'], s['steps_taken'], s['resolution'],
-                     text, starred, shim.auto_score, shim.content_score,
+                     text, starred, s['strength'], shim.auto_score, shim.content_score,
                      shim.final_score, datetime.utcnow().isoformat(), row['id']))
 
         for tag in (args.tag, f"strength-{s['strength']}" if s['strength'] else None):
